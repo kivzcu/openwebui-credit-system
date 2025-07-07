@@ -1,15 +1,18 @@
+import os
+import sys
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from api import credits
-from data.monthly_credit_reset import reset_all_user_credits
-import os
+from app.api import credits
+from app.data.monthly_credit_reset import reset_all_user_credits
 
 # 🔁 Nové importy pro sledování databáze
 import subprocess, time
 from threading import Thread
 from datetime import datetime
+from app.config import DB_FILE, SYNC_SCRIPT, DATA_DIR
 
 def schedule_monthly_reset():
     while True:
@@ -51,19 +54,16 @@ app.add_middleware(
 )
 
 # ⬇️ Databázový pozorovatel (watcher)
-DB_FILE = "/app/data/webui.db"
-SCRIPT  = os.path.join(os.path.dirname(__file__), "data", "sync_credits.py")
-
 class DBChangeHandler(FileSystemEventHandler):
     def on_modified(self, event):
         if event.src_path == DB_FILE:
             print("🟡 Změna databáze detekována, spouštím synchronizaci...")
-            subprocess.run(["python3", SCRIPT])
+            subprocess.run(["python3", SYNC_SCRIPT])
 
 def watch_db():
     print("👁️ Watchdog aktivován")
     observer = Observer()
-    observer.schedule(DBChangeHandler(), path="/app/data", recursive=False)
+    observer.schedule(DBChangeHandler(), path=DATA_DIR, recursive=False)
     observer.start()
     try:
         while True:
@@ -75,7 +75,7 @@ def watch_db():
 @app.on_event("startup")
 def on_startup():
     print("🛠️ První spuštění synchronizace kreditů...")
-    subprocess.run(["python3", SCRIPT])
+    subprocess.run(["python3", SYNC_SCRIPT])
     Thread(target=watch_db, daemon=True).start()
     start_scheduler()
     print("🚀 Watcher + Scheduler spuštěny při startu")

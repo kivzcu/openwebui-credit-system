@@ -5,18 +5,9 @@ import os
 import fcntl
 from datetime import datetime, timezone
 from .credit_logic import calculate_and_deduct
-
+from ..config import CREDITS_FILE, MODELS_FILE, GROUPS_FILE, DB_FILE, LOG_FILE, TRANSACTION_LOG_FILE
 
 router = APIRouter()
-
-# absolutní cesta vzhledem k souboru users.py
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CREDITS_FILE = os.path.abspath(os.path.join(BASE_DIR, "../data/credits.json"))
-MODELS_FILE = os.path.abspath(os.path.join(BASE_DIR, "../data/credits_models.json"))
-GROUPS_FILE = os.path.abspath(os.path.join(BASE_DIR, "../data/credits_groups.json"))
-DB_FILE = "/app/data/webui.db"
-LOG_FILE = os.path.abspath(os.path.join(BASE_DIR, "../data/credits_log.jsonl"))
-TRANSACTION_LOG_FILE = os.path.abspath(os.path.join(BASE_DIR, "../data/transactions.json"))
 
 # -------------------------------
 # PŮVODNÍ /api/users NECHÁVÁME CORE OPENWEBUI !!!

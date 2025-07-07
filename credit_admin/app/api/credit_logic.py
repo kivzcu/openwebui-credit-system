@@ -6,10 +6,8 @@ from fastapi import Request
 import logging
 log = logging.getLogger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CREDITS_FILE = os.path.abspath(os.path.join(BASE_DIR, "../data/credits.json"))
-PRICING_FILE = os.path.abspath(os.path.join(BASE_DIR, "../data/credits_models.json"))
-TRANSACTION_LOG_FILE = os.path.abspath(os.path.join(BASE_DIR, "../data/transactions.json"))
+from ..config import CREDITS_FILE, MODELS_FILE, TRANSACTION_LOG_FILE
+
 
 def calculate_and_deduct_new(request: Request, user_id: str, model_id: str):
     response_data = getattr(request.state, "model_response", {})

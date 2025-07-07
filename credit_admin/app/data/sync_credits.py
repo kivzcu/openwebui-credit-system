@@ -6,13 +6,11 @@ from datetime import datetime, timezone
 import random
 import sys
 
-# Konfigurace souborů
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Add the parent directory to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-CREDITS_FILE = os.path.join(BASE_DIR, "credits.json")
-GROUPS_FILE  = os.path.join(BASE_DIR, "credits_groups.json")
-MODELS_FILE  = os.path.join(BASE_DIR, "credits_models.json")
-DB_FILE = '/app/data/webui.db'
+from config import CREDITS_FILE, GROUPS_FILE, MODELS_FILE, DB_FILE
+
 
 print(f"🔧 Načítám data z:\n{CREDITS_FILE}\n{GROUPS_FILE}\n{MODELS_FILE}\n{DB_FILE}")
 
@@ -20,6 +18,35 @@ DEFAULT_CREDITS = 1000
 DEFAULT_GROUP_ID = "default"
 DEFAULT_GROUP_NAME = "Uživatelé"
 MAX_HISTORY = 10
+
+def check_database_tables():
+    """Zkontroluje, zda databázové tabulky existují."""
+    if not os.path.exists(DB_FILE):
+        print(f"❌ Error: Database file {DB_FILE} not found!")
+        sys.exit(1)
+    
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    required_tables = ['user', 'group', 'model']
+    missing_tables = []
+    
+    for table_name in required_tables:
+        cursor.execute("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name=?
+        """, (table_name,))
+        if not cursor.fetchone():
+            missing_tables.append(table_name)
+    
+    conn.close()
+    
+    if missing_tables:
+        print(f"❌ Error: Required database tables are missing: {', '.join(missing_tables)}")
+        print("Please ensure the database is properly initialized with all required tables.")
+        sys.exit(1)
+    
+    print("✅ Database tables verified.")
 
 def load_credits():
     if not os.path.exists(CREDITS_FILE):
@@ -206,6 +233,7 @@ def set_credits_for_group(group_id, amount):
     save_groups(groups)
 
 if __name__ == "__main__":
+    check_database_tables()
     sync_users_with_db()
     sync_groups_with_db()
     sync_models_with_db()

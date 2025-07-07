@@ -2,11 +2,12 @@ import json
 import os
 import fcntl
 from datetime import datetime, timezone
+import sys
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CREDITS_FILE = os.path.join(BASE_DIR, "credits.json")
-GROUPS_FILE  = os.path.join(BASE_DIR, "credits_groups.json")
-LOG_FILE = os.path.join(BASE_DIR, "credits_log.jsonl" )
+# Add the parent directory to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from config import CREDITS_FILE, GROUPS_FILE, LOG_FILE
 
 MAX_HISTORY = 10
 
