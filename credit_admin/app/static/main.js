@@ -117,7 +117,7 @@ container.innerHTML += `
 
     container.innerHTML += `<div id="modalRoot"></div>`;
   } catch (err) {
-    container.innerHTML += `<p class="text-red-500">Chyba při načítání uživatelů: ${err.message}</p>`;
+    container.innerHTML += `<p class="text-red-500">Error loading users: ${err.message}</p>`;
   }
 }
 
@@ -147,7 +147,7 @@ function editUser(userId) {
 }
 function exportUsersToExcel() {
   if (!currentUsers.length) {
-    alert("Нет данных для экспорта пользователей.");
+    alert("No user data available for export.");
     return;
   }
   const worksheet = XLSX.utils.json_to_sheet(currentUsers);
@@ -158,7 +158,7 @@ function exportUsersToExcel() {
 
 function exportGroupsToExcel() {
   if (!currentGroups.length) {
-    alert("Нет данных для экспорта групп.");
+    alert("No group data available for export.");
     return;
   }
   const worksheet = XLSX.utils.json_to_sheet(currentGroups);
@@ -169,7 +169,7 @@ function exportGroupsToExcel() {
 
 function exportModelsToExcel() {
   if (!currentModels.length) {
-    alert("Нет данных для экспорта моделей.");
+    alert("No model data available for export.");
     return;
   }
   const worksheet = XLSX.utils.json_to_sheet(currentModels);
@@ -191,11 +191,11 @@ async function saveUserCredits(userId) {
 
   const result = await res.json();
   if (result.status === 'success') {
-    alert(`Kredity úspěšně aktualizovány na ${newCredits}`);
+    alert(`Credits successfully updated to ${newCredits}`);
     document.querySelector('.fixed').remove();
     renderUsersView();
   } else {
-    alert('Chyba při ukládání kreditů');
+    alert('Error saving credits');
   }
 }
 
@@ -254,7 +254,7 @@ container.innerHTML += `
 
 
   } catch (err) {
-    container.innerHTML += `<p class="text-red-500">Chyba při načítání skupin: ${err.message}</p>`;
+    container.innerHTML += `<p class="text-red-500">Error loading groups: ${err.message}</p>`;
   }
 }
 
@@ -295,11 +295,11 @@ async function saveGroupCredits(groupId) {
 
   const result = await res.json();
   if (result.status === 'success') {
-    alert(`Skupinové kredity úspěšně nastaveny na ${newCredits}`);
+    alert(`Group credits successfully set to ${newCredits}`);
     document.querySelector('.fixed').remove();
     renderGroupsView();
   } else {
-    alert('Chyba při ukládání kreditů skupiny');
+    alert('Error saving group credits');
   }
 }
 
@@ -360,7 +360,7 @@ container.innerHTML += `
 
 
   } catch (err) {
-    container.innerHTML += `<p class="text-red-500">Chyba při načítání modelů: ${err.message}</p>`;
+    container.innerHTML += `<p class="text-red-500">Error loading models: ${err.message}</p>`;
   }
 }
 
@@ -405,11 +405,11 @@ async function saveModelPricing(modelId) {
 
   const result = await res.json();
   if (result.status === 'success') {
-    alert(`Ceny modelu byly úspěšně aktualizovány.`);
+    alert(`Model pricing successfully updated.`);
     document.querySelector('.fixed').remove();
     renderModelsView();
   } else {
-    alert('Chyba při ukládání cen modelu');
+    alert('Error saving model pricing');
   }
 }
 
@@ -430,7 +430,7 @@ async function renderSystemLogsView() {
       <pre>${content}</pre>
     </div>`;
   } catch (err) {
-    container.innerHTML += `<p class="text-red-500">Chyba při načítání systémových logů: ${err.message}</p>`;
+    container.innerHTML += `<p class="text-red-500">Error loading system logs: ${err.message}</p>`;
   }
 }
 
@@ -451,6 +451,6 @@ async function renderTransactionLogsView() {
       <pre>${content}</pre>
     </div>`;
   } catch (err) {
-    container.innerHTML += `<p class="text-red-500">Chyba při načítání transakčních logů: ${err.message}</p>`;
+    container.innerHTML += `<p class="text-red-500">Error loading transaction logs: ${err.message}</p>`;
   }
 }

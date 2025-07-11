@@ -288,7 +288,7 @@ def get_system_logs(limit: int = 100):
             recent_lines = lines[-limit:]
             logs = [json.loads(line) for line in recent_lines]
     except Exception as e:
-        return {"error": f"Chyba při čtení logů: {str(e)}"}
+        return {"error": f"Error reading logs: {str(e)}"}
 
     return {"logs": logs}
 
@@ -303,7 +303,7 @@ def get_transaction_logs(limit: int = 100):
             data = json.load(f)
             transactions = data.get("transactions", [])[-limit:]
     except Exception as e:
-        return {"error": f"Chyba při čtení transakčního logu: {str(e)}"}
+        return {"error": f"Error reading transaction log: {str(e)}"}
 
     return {"transactions": transactions}
 

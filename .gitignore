@@ -10,7 +10,6 @@ venv/
 
 # Logs
 *.log
-credit_admin/app/data/credits_log.jsonl
 
 # OS files
 .DS_Store
@@ -23,3 +22,6 @@ credit_admin/app/data/credits_log.jsonl
 
 # Ignore VSCode settings
 .vscode/
+
+# Data files
+credit_admin/data/*.json
