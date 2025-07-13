@@ -6,11 +6,33 @@ version: 1.0
 
 from pydantic import BaseModel, Field
 import httpx
+import tiktoken
+import re
+
 
 CREDITS_API_BASE_URL = "http://localhost:8000/api/credits"
 
 
 class Filter:
+    def _count_tokens_o200k(self, text: str) -> int:
+        """Counts tokens using o200k_base encoding."""
+        encoding = tiktoken.get_encoding("o200k_base")
+        return len(encoding.encode(text))
+
+    def _count_tokens_anthropic_dummy(self, text: str) -> int:
+        """
+        Example of a dummy counting function for a different library.
+        e.g., from anthropic import Anthropic; client = Anthropic(); client.count_tokens(text)
+        """
+        # Dummy implementation: count words
+        return len(text.split())
+
+    # Map of model name patterns to their respective token counting functions.
+    COUNT_FUNCTIONS = {
+        r"^(gpt-4\.1-|4o-mini)": _count_tokens_o200k,
+        r"^(claude-.*)": _count_tokens_anthropic_dummy,
+    }
+
     class Valves(BaseModel):
         show_status: bool = Field(
             default=True, description="Zobrazit info o stržení kreditů"
@@ -18,62 +40,81 @@ class Filter:
 
     def __init__(self):
         self.valves = self.Valves()
+        self.estimation_warning = ""
 
-    def safe_token_count(self, text: str) -> int:
-        return max(1, len(text) // 4)
-
-    def extract_token_count(self, body: dict, token_type: str) -> int:
+    def get_token_count(self, text: str, model_name: str) -> int:
         """
-        Tries to extract prompt_tokens or completion_tokens from various places.
-        Preferably from messages[-1]["usage"], then fallback to metadata, then estimate.
+        Returns the token count for a given text and model.
         """
-        method_used = None
-        token_count = 0
+        # Check for a matching counting function for special cases
+        for pattern, func in self.COUNT_FUNCTIONS.items():
+            if re.match(pattern, model_name):
+                return func(self, text)
 
+        # If no special mapping, try getting encoding from model name
         try:
-            token_count = int(body["messages"][-1]["usage"].get(token_type, 0))
-            method_used = "messages[-1]['usage']"
-        except Exception:
-            pass
+            encoding = tiktoken.encoding_for_model(model_name)
+            return len(encoding.encode(text))
+        except KeyError:
+            self.estimation_warning = f"⚠️ The cost is an estimate.\n"
+            encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(text))
 
-        if method_used is None:
-            try:
-                token_count = int(body.get("metadata", {}).get("metrics", {}).get(token_type, 0))
-                method_used = "metadata.metrics"
-            except Exception:
-                pass
+    def count_tokens(self, msg: dict, model_name: str) -> int:
+        content = msg.get("content", "")
+        total_tokens = 0
 
-        if method_used is None:
-            try:
-                token_count = int(body.get(token_type, 0))
-                method_used = "body[token_type]"
-            except Exception:
-                pass
+        if isinstance(content, list):
+            # Handle multi-modal content
+            for item in content:
+                if item.get("type") == "text":
+                    text = item.get("text", "")
+                    total_tokens += self.get_token_count(text, model_name)
+        elif isinstance(content, str):
+            # Handle text-only content
+            total_tokens = self.get_token_count(content, model_name)
+        else:
+            # Handle unexpected content types
+            total_tokens = 0
 
-        print(f"[extract_token_count] token_type={token_type}, token_count={token_count}, method_used={method_used}")
-        return token_count
-    
+        return total_tokens
+
     async def outlet(
         self, body, __user__=None, __event_emitter__=None, __event_call__=None
     ):
+        if not __user__:
+            return body
+
         user_id = __user__.get("id")
         model_name = body.get("model", "gpt-3.5-turbo")
+        self.estimation_warning = ""
 
-        prompt_tokens = self.extract_token_count(body, "prompt_tokens")
-        completion_tokens = self.extract_token_count(body, "completion_tokens")
+        messages = body.get("messages", [])
+        if not messages:
+            return body
+
+        # The last message is the completion, the rest are the prompt
+        completion_message = messages[-1]
+        prompt_messages = messages[:-1]
+
+        prompt_tokens = sum(
+            self.count_tokens(msg, model_name) for msg in prompt_messages
+        )
+        completion_tokens = self.count_tokens(completion_message, model_name)
 
         try:
             async with httpx.AsyncClient() as client:
-                model_res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/models"
-                )
+                # Use optimized endpoints - get only the specific user and model we need
                 user_res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/users"
+                    f"{CREDITS_API_BASE_URL}/user/{user_id}"
                 )
-                model_res.raise_for_status()
+                model_res = await client.get(
+                    f"{CREDITS_API_BASE_URL}/model/{model_name}"
+                )
                 user_res.raise_for_status()
-                models = model_res.json()
-                users = user_res.json()
+                model_res.raise_for_status()
+                user_data = user_res.json()
+                model_data = model_res.json()
         except Exception as e:
             if self.valves.show_status and __event_emitter__:
                 await __event_emitter__(
@@ -86,9 +127,6 @@ class Filter:
                     }
                 )
             return body
-
-        model_data = next((m for m in models if m.get("id") == model_name), None)
-        user_data = next((u for u in users if u.get("id") == user_id), None)
 
         if not model_data or not user_data:
             if self.valves.show_status and __event_emitter__:
@@ -103,24 +141,30 @@ class Filter:
                 )
             return body
 
-        fixed_price = float(model_data.get("fixed_price", 0))
-        variable_price = float(model_data.get("variable_price", 0))
+        context_price = float(model_data.get("context_price", 0))
+        generation_price = float(model_data.get("generation_price", 0))
         credits = float(user_data.get("credits", 0))
 
-        cost = prompt_tokens * fixed_price + completion_tokens * variable_price
-        new_balance = max(0.0, credits - cost)
+        cost = prompt_tokens * context_price + completion_tokens * generation_price
 
         try:
             async with httpx.AsyncClient() as client:
-                update_res = await client.post(
-                    f"{CREDITS_API_BASE_URL}/update",
+                # Use the new optimized deduction endpoint
+                deduction_res = await client.post(
+                    f"{CREDITS_API_BASE_URL}/deduct-tokens",
                     json={
-                        "id": user_id,
-                        "credits": new_balance,
+                        "user_id": user_id,
+                        "model_id": model_name,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
                         "actor": "auto-system",
                     },
                 )
-                update_res.raise_for_status()
+                deduction_res.raise_for_status()
+                result = deduction_res.json()
+                new_balance = result.get("new_balance", 0)
+                actual_cost = result.get("deducted", 0)
+                full_cost = result.get("cost", 0)
         except Exception as e:
             if self.valves.show_status and __event_emitter__:
                 await __event_emitter__(
@@ -135,16 +179,27 @@ class Filter:
             return body
 
         if self.valves.show_status and __event_emitter__:
+            # Check if user had insufficient funds
+            if actual_cost < full_cost:
+                # Insufficient funds scenario
+                shortage = full_cost - actual_cost
+                description = f"⚠️ Insufficient credits! Charged {actual_cost:.3f} of {full_cost:.3f} credits (short by {shortage:.3f}) – Balance: {new_balance:.3f}"
+            else:
+                # Normal scenario - full payment
+                description = f"💳 Charged {actual_cost:.3f} credits – New balance: {new_balance:.3f}"
+            
+            if self.estimation_warning:
+                description = self.estimation_warning + "<br/>" + description
+
             await __event_emitter__(
                 {
                     "type": "status",
                     "data": {
-                        "description": (
-                            f"💳 Charged {cost:.3f} credits – New balance: {new_balance:.3f}"
-                        ),
+                        "description": description,
                         "done": True,
                     },
                 }
             )
 
         return body
+

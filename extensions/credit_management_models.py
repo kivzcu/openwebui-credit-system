@@ -27,30 +27,29 @@ class Action:
 
         try:
             async with httpx.AsyncClient() as client:
+                # Use optimized endpoint for specific model
                 res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/models"
+                    f"{CREDITS_API_BASE_URL}/model/{model_name}"
                 )
                 res.raise_for_status()
-                models = res.json()
+                model_data = res.json()
         except Exception as e:
             body["messages"][-1][
                 "content"
             ] += f"\n\n Failed to load model pricing: {str(e)}"
             return body
 
-        model_data = next((m for m in models if m.get("id") == model_name), None)
-
         if not model_data:
             body["messages"][-1]["content"] += "\n\n Model not found in pricing list."
             return body
 
-        fixed = model_data.get("fixed_price", 0)
-        variable = model_data.get("variable_price", 0)
+        context_price = model_data.get("context_price", 0)
+        generation_price = model_data.get("generation_price", 0)
 
         body["messages"][-1]["content"] += (
             f"\n\n📊 Model **{model_name}** pricing:\n"
-            f"• Prompt (input): {fixed} credits/token\n"
-            f"• Completion (output): {variable} credits/token"
+            f"• Prompt (input): {context_price} credits/token\n"
+            f"• Completion (output): {generation_price} credits/token"
         )
 
         return body

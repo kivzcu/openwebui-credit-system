@@ -186,7 +186,7 @@ async function saveUserCredits(userId) {
   const res = await fetch('/api/credits/update', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: userId, credits: newCredits, actor: 'admin' })
+    body: JSON.stringify({ user_id: userId, credits: newCredits, actor: 'admin' })
   });
 
   const result = await res.json();
@@ -286,11 +286,15 @@ function editGroup(groupId) {
 async function saveGroupCredits(groupId) {
   const input = document.getElementById('groupCreditInput');
   const newCredits = parseFloat(input.value);
+  
+  // Get the group name from current groups
+  const group = currentGroups.find(g => g.id === groupId);
+  const groupName = group ? group.name : 'Unknown';
 
   const res = await fetch('/api/credits/groups/update', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: groupId, default_credits: newCredits, actor: 'admin' })
+    body: JSON.stringify({ group_id: groupId, name: groupName, default_credits: newCredits, actor: 'admin' })
   });
 
   const result = await res.json();
@@ -328,8 +332,8 @@ async function renderModelsView() {
       <thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850">
         <tr>
           <th class="px-3 py-1.5">Model</th>
-          <th class="px-3 py-1.5">Imput Token Price</th>
-          <th class="px-3 py-1.5">Output Token price</th>
+          <th class="px-3 py-1.5">Context Token Price</th>
+          <th class="px-3 py-1.5">Generation Token Price</th>
           <th class="px-3 py-1.5 text-right">Actions</th>
         </tr>
       </thead>
@@ -339,8 +343,8 @@ async function renderModelsView() {
       table += `
         <tr class="bg-white dark:bg-gray-900 border-t">
           <td class="px-3 py-1">${model.name}</td>
-          <td class="px-3 py-1">${model.fixed_price}</td>
-          <td class="px-3 py-1">${model.variable_price}</td>
+          <td class="px-3 py-1">${model.context_price}</td>
+          <td class="px-3 py-1">${model.generation_price}</td>
           <td class="px-3 py-1 text-right">
             <button class="px-2 py-1 text-sm bg-blue-600 text-white rounded" onclick="editModel('${model.id}')">Edit</button>
           </td>
@@ -377,10 +381,10 @@ function editModel(modelId) {
         <button onclick="this.closest('.fixed').remove()">✕</button>
       </div>
       <div class="space-y-3">
-        <label class="block text-sm">Imput Token Price</label>
-        <input type="number" id="fixedPriceInput" value="${model.fixed_price}" step="0.001" class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
-        <label class="block text-sm">Output Token Price</label>
-        <input type="number" id="variablePriceInput" value="${model.variable_price}" step="0.0001" class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
+        <label class="block text-sm">Context Token Price</label>
+        <input type="number" id="contextPriceInput" value="${model.context_price}" step="0.001" class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
+        <label class="block text-sm">Generation Token Price</label>
+        <input type="number" id="generationPriceInput" value="${model.generation_price}" step="0.0001" class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
       </div>
       <div class="flex justify-end gap-2 pt-4">
         <button onclick="this.closest('.fixed').remove()" class="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded-md">Cancel</button>
@@ -392,15 +396,15 @@ function editModel(modelId) {
 }
 
 async function saveModelPricing(modelId) {
-  const fixedInput = document.getElementById('fixedPriceInput');
-  const variableInput = document.getElementById('variablePriceInput');
-  const fixedPrice = parseFloat(fixedInput.value);
-  const variablePrice = parseFloat(variableInput.value);
+  const contextInput = document.getElementById('contextPriceInput');
+  const generationInput = document.getElementById('generationPriceInput');
+  const contextPrice = parseFloat(contextInput.value);
+  const generationPrice = parseFloat(generationInput.value);
 
   const res = await fetch('/api/credits/models/update', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: modelId, fixed_price: fixedPrice, variable_price: variablePrice, actor: 'admin' })
+    body: JSON.stringify({ model_id: modelId, context_price: contextPrice, generation_price: generationPrice, actor: 'admin' })
   });
 
   const result = await res.json();

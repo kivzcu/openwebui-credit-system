@@ -40,34 +40,35 @@ class Filter:
 
         try:
             async with httpx.AsyncClient() as client:
-                users_res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/users"
+                # Use optimized endpoints - get only specific user and model
+                user_res = await client.get(
+                    f"{CREDITS_API_BASE_URL}/user/{user_id}"
                 )
-                models_res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/models"
+                model_res = await client.get(
+                    f"{CREDITS_API_BASE_URL}/model/{model_name}"
                 )
-                users_res.raise_for_status()
-                models_res.raise_for_status()
-                users = users_res.json()
-                models = models_res.json()
+                user_res.raise_for_status()
+                model_res.raise_for_status()
+                user_data = user_res.json()
+                model_data = model_res.json()
         except Exception as e:
             body["messages"][-1][
                 "content"
             ] += f"\n\nUnable to load credit data: {str(e)}"
             return body
 
-        user_data = next((u for u in users if u["id"] == user_id), None)
+        user_data = user_data
         if not user_data:
             body["messages"][-1]["content"] += "\n\nUser data not found."
             return body
 
-        model_data = next((m for m in models if m["id"] == model_name), None)
+        model_data = model_data
         if not model_data:
             body["messages"][-1]["content"] += "\n\nModel not found in cost list."
             return body
 
-        fixed_price = model_data.get("fixed_price", 0)
-        cost = prompt_tokens * fixed_price
+        context_price = model_data.get("context_price", 0)
+        cost = prompt_tokens * context_price
         credits = user_data.get("credits", 0)
 
         if credits < cost:
