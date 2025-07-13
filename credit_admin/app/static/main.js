@@ -424,15 +424,32 @@ async function renderSystemLogsView() {
   try {
     const res = await fetch('/api/credits/system-logs');
     const data = await res.json();
-    const logs = (data.logs || []).filter(log => log.actor === 'admin');
+    const logs = data.logs || [];
 
-    const content = logs.map(log => {
-      return `[${log.timestamp}] [${log.type}] ${JSON.stringify(log)}`;
-    }).join('\n');
+    let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+      <thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850">
+        <tr>
+          <th class="px-3 py-1.5">Timestamp</th>
+          <th class="px-3 py-1.5">Type</th>
+          <th class="px-3 py-1.5">Actor</th>
+          <th class="px-3 py-1.5">Message</th>
+        </tr>
+      </thead>
+      <tbody>`;
 
-    container.innerHTML += `<div class="bg-black text-green-400 font-mono text-xs p-2 rounded-lg h-96 overflow-y-auto">
-      <pre>${content}</pre>
-    </div>`;
+    for (const log of logs) {
+      const timestamp = new Date(log.created_at).toLocaleString();
+      table += `
+        <tr class="bg-white dark:bg-gray-900 border-t">
+          <td class="px-3 py-1 text-xs">${timestamp}</td>
+          <td class="px-3 py-1 text-xs font-mono">${log.log_type}</td>
+          <td class="px-3 py-1 text-xs">${log.actor}</td>
+          <td class="px-3 py-1 text-xs">${log.message || ''}</td>
+        </tr>`;
+    }
+
+    table += '</tbody></table>';
+    container.innerHTML += table;
   } catch (err) {
     container.innerHTML += `<p class="text-red-500">Error loading system logs: ${err.message}</p>`;
   }
@@ -443,17 +460,41 @@ async function renderTransactionLogsView() {
   container.innerHTML = '<h2 class="text-2xl font-bold mb-4">Transaction Logs</h2>';
 
   try {
-    const res = await fetch('/api/credits/system-logs');
+    const res = await fetch('/api/credits/transactions');
     const data = await res.json();
-    const logs = (data.logs || []).filter(log => log.actor === 'auto-system');
+    const transactions = data.transactions || [];
 
-    const content = logs.map(log => {
-      return `[${log.timestamp}] USER: ${log.user_id} | NEW BALANCE: ${log.new_credits}`;
-    }).join('\n');
+    let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
+      <thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850">
+        <tr>
+          <th class="px-3 py-1.5">Timestamp</th>
+          <th class="px-3 py-1.5">User ID</th>
+          <th class="px-3 py-1.5">Amount</th>
+          <th class="px-3 py-1.5">Type</th>
+          <th class="px-3 py-1.5">Actor</th>
+          <th class="px-3 py-1.5">Balance After</th>
+          <th class="px-3 py-1.5">Reason</th>
+        </tr>
+      </thead>
+      <tbody>`;
 
-    container.innerHTML += `<div class="bg-black text-yellow-300 font-mono text-xs p-2 rounded-lg h-96 overflow-y-auto">
-      <pre>${content}</pre>
-    </div>`;
+    for (const transaction of transactions) {
+      const timestamp = new Date(transaction.created_at).toLocaleString();
+      const amountClass = transaction.amount >= 0 ? 'text-green-600' : 'text-red-600';
+      table += `
+        <tr class="bg-white dark:bg-gray-900 border-t">
+          <td class="px-3 py-1 text-xs">${timestamp}</td>
+          <td class="px-3 py-1 text-xs font-mono">${transaction.user_id}</td>
+          <td class="px-3 py-1 text-xs ${amountClass}">${transaction.amount > 0 ? '+' : ''}${transaction.amount}</td>
+          <td class="px-3 py-1 text-xs">${transaction.transaction_type}</td>
+          <td class="px-3 py-1 text-xs">${transaction.actor}</td>
+          <td class="px-3 py-1 text-xs">${transaction.balance_after}</td>
+          <td class="px-3 py-1 text-xs">${transaction.reason || ''}</td>
+        </tr>`;
+    }
+
+    table += '</tbody></table>';
+    container.innerHTML += table;
   } catch (err) {
     container.innerHTML += `<p class="text-red-500">Error loading transaction logs: ${err.message}</p>`;
   }
