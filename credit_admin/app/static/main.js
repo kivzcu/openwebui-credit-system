@@ -1,6 +1,137 @@
+// Authentication state
+let authToken = localStorage.getItem('authToken');
+let currentUser = null;
+
+// Check authentication on page load
 document.addEventListener('DOMContentLoaded', () => {
-  selectView('users');
+  if (authToken) {
+    verifyToken();
+  } else {
+    showLoginForm();
+  }
 });
+
+function showLoginForm() {
+  document.getElementById('loginForm').classList.remove('hidden');
+  document.getElementById('adminInterface').classList.add('hidden');
+}
+
+function showAdminInterface() {
+  document.getElementById('loginForm').classList.add('hidden');
+  document.getElementById('adminInterface').classList.remove('hidden');
+  selectView('users');
+}
+
+function hideError() {
+  document.getElementById('loginError').classList.add('hidden');
+}
+
+function showError(message) {
+  document.getElementById('loginErrorText').textContent = message;
+  document.getElementById('loginError').classList.remove('hidden');
+}
+
+// Login form submission
+document.getElementById('loginFormElement').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  hideError();
+  
+  const username = document.getElementById('username').value;
+  const password = document.getElementById('password').value;
+  
+  const formData = new FormData();
+  formData.append('username', username);
+  formData.append('password', password);
+  
+  try {
+    const response = await fetch('/auth/login', {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      authToken = data.access_token;
+      localStorage.setItem('authToken', authToken);
+      await getCurrentUser();
+      showAdminInterface();
+    } else {
+      const error = await response.json();
+      showError(error.detail || 'Login failed');
+    }
+  } catch (error) {
+    showError('Network error. Please try again.');
+  }
+});
+
+async function verifyToken() {
+  try {
+    const response = await fetch('/auth/me', {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    
+    if (response.ok) {
+      await getCurrentUser();
+      showAdminInterface();
+    } else {
+      logout();
+    }
+  } catch (error) {
+    logout();
+  }
+}
+
+async function getCurrentUser() {
+  try {
+    const response = await fetch('/auth/me', {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    
+    if (response.ok) {
+      currentUser = await response.json();
+      document.getElementById('userInfo').textContent = `Logged in as: ${currentUser.username}`;
+    }
+  } catch (error) {
+    console.error('Failed to get user info:', error);
+  }
+}
+
+function logout() {
+  authToken = null;
+  currentUser = null;
+  localStorage.removeItem('authToken');
+  showLoginForm();
+}
+
+// Update fetch function to include auth header
+async function authenticatedFetch(url, options = {}) {
+  if (!authToken) {
+    logout();
+    throw new Error('Not authenticated');
+  }
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${authToken}`,
+    ...options.headers
+  };
+  
+  const response = await fetch(url, {
+    ...options,
+    headers
+  });
+  
+  if (response.status === 401) {
+    logout();
+    throw new Error('Authentication expired');
+  }
+  
+  return response;
+}
 
 function selectView(view) {
   switch (view) {
@@ -75,7 +206,7 @@ async function renderUsersView() {
   </div>`;
 
   try {
-    const res = await fetch('/api/credits/users');
+    const res = await authenticatedFetch('/api/credits/users');
     currentUsers = await res.json();
 
     let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
@@ -106,12 +237,20 @@ async function renderUsersView() {
     table += '</tbody></table>';
 container.innerHTML += table;
 container.innerHTML += `
-  <button onclick="exportUsersToExcel()" class="mt-4 flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
-      <path stroke-linecap="round" stroke-linejoin="round" d="m9 12.75 3 3m0 0 3-3m-3 3v-7.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-    </svg>
-    Export Users to Excel
-  </button>
+  <div class="flex gap-2 mt-4">
+    <button onclick="exportUsersToExcel()" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+        <path stroke-linecap="round" stroke-linejoin="round" d="m9 12.75 3 3m0 0 3-3m-3 3v-7.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+      </svg>
+      Export Users to Excel
+    </button>
+    <button onclick="syncUsersFromOpenWebUI()" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+      </svg>
+      Sync Users from OpenWebUI
+    </button>
+  </div>
   <div id="modalRoot"></div>`;
 
 
@@ -183,9 +322,8 @@ async function saveUserCredits(userId) {
   const input = document.getElementById('creditInput');
   const newCredits = parseFloat(input.value);
 
-  const res = await fetch('/api/credits/update', {
+  const res = await authenticatedFetch('/api/credits/update', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: userId, credits: newCredits, actor: 'admin' })
   });
 
@@ -196,6 +334,76 @@ async function saveUserCredits(userId) {
     renderUsersView();
   } else {
     alert('Error saving credits');
+  }
+}
+
+async function syncUsersFromOpenWebUI() {
+  const button = event.target;
+  const originalText = button.innerHTML;
+  
+  // Show loading state
+  button.innerHTML = `
+    <svg class="animate-spin w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="m12 2v4m0 12v4m10-10h-4M6 12H2"></path>
+    </svg>
+    Syncing...
+  `;
+  button.disabled = true;
+
+  try {
+    const res = await authenticatedFetch('/api/credits/sync-users', {
+      method: 'POST'
+    });
+    
+    const result = await res.json();
+    if (result.status === 'success') {
+      alert('Users synced successfully from OpenWebUI!');
+      renderUsersView(); // Refresh the user list
+    } else {
+      alert(`Sync failed: ${result.message}`);
+    }
+  } catch (error) {
+    alert(`Sync failed: ${error.message}`);
+  } finally {
+    // Restore button state
+    button.innerHTML = originalText;
+    button.disabled = false;
+  }
+}
+
+async function syncModelsFromOpenWebUI() {
+  const button = event.target;
+  const originalText = button.innerHTML;
+  
+  // Show loading state
+  button.innerHTML = `
+    <svg class="animate-spin w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="m12 2v4m0 12v4m10-10h-4M6 12H2"></path>
+    </svg>
+    Syncing...
+  `;
+  button.disabled = true;
+
+  try {
+    const res = await authenticatedFetch('/api/credits/sync-models', {
+      method: 'POST'
+    });
+    
+    const result = await res.json();
+    if (result.status === 'success') {
+      alert('Models synced successfully from OpenWebUI!');
+      renderModelsView(); // Refresh the models list
+    } else {
+      alert(`Model sync failed: ${result.message}`);
+    }
+  } catch (error) {
+    alert(`Model sync failed: ${error.message}`);
+  } finally {
+    // Restore button state
+    button.innerHTML = originalText;
+    button.disabled = false;
   }
 }
 
@@ -217,7 +425,7 @@ async function renderGroupsView() {
 
 
   try {
-    const res = await fetch('/api/credits/groups');
+    const res = await authenticatedFetch('/api/credits/groups');
     currentGroups = await res.json();
 
     let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
@@ -291,9 +499,8 @@ async function saveGroupCredits(groupId) {
   const group = currentGroups.find(g => g.id === groupId);
   const groupName = group ? group.name : 'Unknown';
 
-  const res = await fetch('/api/credits/groups/update', {
+  const res = await authenticatedFetch('/api/credits/groups/update', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ group_id: groupId, name: groupName, default_credits: newCredits, actor: 'admin' })
   });
 
@@ -325,7 +532,7 @@ async function renderModelsView() {
 
 
   try {
-    const res = await fetch('/api/credits/models');
+    const res = await authenticatedFetch('/api/credits/models');
     currentModels = await res.json();
 
     let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
@@ -354,12 +561,20 @@ async function renderModelsView() {
     table += '</tbody></table>';
 container.innerHTML += table;
 container.innerHTML += `
-  <button onclick="exportModelsToExcel()" class="mt-4 flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
-      <path stroke-linecap="round" stroke-linejoin="round" d="m9 12.75 3 3m0 0 3-3m-3 3v-7.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-    </svg>
-    Export Models to Excel
-  </button>
+  <div class="flex gap-2 mt-4">
+    <button onclick="exportModelsToExcel()" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+        <path stroke-linecap="round" stroke-linejoin="round" d="m9 12.75 3 3m0 0 3-3m-3 3v-7.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+      </svg>
+      Export Models to Excel
+    </button>
+    <button onclick="syncModelsFromOpenWebUI()" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+      </svg>
+      Sync Models from OpenWebUI
+    </button>
+  </div>
   <div id="modalRoot"></div>`;
 
 
@@ -401,9 +616,8 @@ async function saveModelPricing(modelId) {
   const contextPrice = parseFloat(contextInput.value);
   const generationPrice = parseFloat(generationInput.value);
 
-  const res = await fetch('/api/credits/models/update', {
+  const res = await authenticatedFetch('/api/credits/models/update', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model_id: modelId, context_price: contextPrice, generation_price: generationPrice, actor: 'admin' })
   });
 
@@ -422,7 +636,7 @@ async function renderSystemLogsView() {
   container.innerHTML = '<h2 class="text-2xl font-bold mb-4">System Logs</h2>';
 
   try {
-    const res = await fetch('/api/credits/system-logs');
+    const res = await authenticatedFetch('/api/credits/system-logs');
     const data = await res.json();
     const logs = data.logs || [];
 
@@ -460,7 +674,7 @@ async function renderTransactionLogsView() {
   container.innerHTML = '<h2 class="text-2xl font-bold mb-4">Transaction Logs</h2>';
 
   try {
-    const res = await fetch('/api/credits/transactions');
+    const res = await authenticatedFetch('/api/credits/transactions');
     const data = await res.json();
     const transactions = data.transactions || [];
 

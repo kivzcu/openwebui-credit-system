@@ -3,7 +3,7 @@ Optimized API endpoints for credit management system.
 Uses SQLite database instead of JSON files and provides targeted endpoints.
 """
 
-from fastapi import APIRouter, Request, HTTPException, Query
+from fastapi import APIRouter, Request, HTTPException, Query, Depends
 from typing import Optional, List
 import sqlite3
 from datetime import datetime, timezone
@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from app.database import db
 from app.config import DB_FILE  # OpenWebUI database for user sync
+from app.auth import get_current_admin_user, verify_api_key, User
 
 router = APIRouter()
 
@@ -41,7 +42,7 @@ class CreditDeductionRequest(BaseModel):
 
 # User-specific endpoints (optimized for extensions)
 @router.get("/api/credits/user/{user_id}", tags=["credits"])
-async def get_user_credits(user_id: str):
+async def get_user_credits(user_id: str, _: bool = Depends(verify_api_key)):
     """Get specific user's credit information - optimized for extensions"""
     user_data = db.get_user_credits(user_id)
     
@@ -62,7 +63,7 @@ async def get_user_credits(user_id: str):
     }
 
 @router.get("/api/credits/model/{model_id}", tags=["credits"])
-async def get_model_pricing(model_id: str):
+async def get_model_pricing(model_id: str, _: bool = Depends(verify_api_key)):
     """Get specific model's pricing information - optimized for extensions"""
     model_data = db.get_model_pricing(model_id)
     
@@ -84,7 +85,7 @@ async def get_model_pricing(model_id: str):
 
 # Optimized credit deduction endpoint for extensions
 @router.post("/api/credits/deduct-tokens", tags=["credits"])
-async def deduct_credits_for_tokens(request: CreditDeductionRequest):
+async def deduct_credits_for_tokens(request: CreditDeductionRequest, _: bool = Depends(verify_api_key)):
     """
     Optimized endpoint for credit deduction based on token usage.
     Used by extensions instead of the old inefficient method.
@@ -125,7 +126,7 @@ async def deduct_credits_for_tokens(request: CreditDeductionRequest):
 
 # Batch endpoint for admin UI (when you need multiple users/models)
 @router.get("/api/credits/users", tags=["credits"])
-async def get_all_users_with_credits():
+async def get_all_users_with_credits(current_user: User = Depends(get_current_admin_user)):
     """Get all users with credit information - for admin UI"""
     # First sync users from OpenWebUI
     await sync_all_users_from_openwebui()
@@ -158,7 +159,7 @@ async def get_all_users_with_credits():
     return result
 
 @router.get("/api/credits/models", tags=["credits"])
-async def get_all_models():
+async def get_all_models(current_user: User = Depends(get_current_admin_user)):
     """Get all model pricing information - for admin UI"""
     models = db.get_all_models()
     return [
@@ -172,7 +173,7 @@ async def get_all_models():
     ]
 
 @router.get("/api/credits/groups", tags=["credits"])
-async def get_all_groups():
+async def get_all_groups(current_user: User = Depends(get_current_admin_user)):
     """Get all credit groups - for admin UI"""
     groups = db.get_all_groups()
     return [
@@ -186,7 +187,7 @@ async def get_all_groups():
 
 # Update endpoints
 @router.post("/api/credits/update", tags=["credits"])
-async def update_user_credits(request: CreditUpdateRequest):
+async def update_user_credits(request: CreditUpdateRequest, current_user: User = Depends(get_current_admin_user)):
     """Update user's credit balance"""
     success = db.update_user_credits(
         user_id=request.user_id,
@@ -203,7 +204,7 @@ async def update_user_credits(request: CreditUpdateRequest):
         raise HTTPException(status_code=500, detail="Failed to update credits")
 
 @router.post("/api/credits/models/update", tags=["credits"])
-async def update_model_pricing(request: ModelPricingRequest):
+async def update_model_pricing(request: ModelPricingRequest, current_user: User = Depends(get_current_admin_user)):
     """Update model pricing"""
     success = db.update_model_pricing(
         model_id=request.model_id,
@@ -225,7 +226,7 @@ async def update_model_pricing(request: ModelPricingRequest):
         raise HTTPException(status_code=500, detail="Failed to update model pricing")
 
 @router.post("/api/credits/groups/update", tags=["credits"])
-async def update_group_credits(request: GroupUpdateRequest):
+async def update_group_credits(request: GroupUpdateRequest, current_user: User = Depends(get_current_admin_user)):
     """Update group default credits"""
     success = db.update_group(
         group_id=request.group_id,
@@ -288,6 +289,41 @@ async def sync_user_from_openwebui(user_id: str):
         print(f"Error syncing user {user_id}: {e}")
     return False
 
+async def sync_models_from_openwebui():
+    """Sync all models from OpenWebUI database"""
+    try:
+        with sqlite3.connect(DB_FILE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, name, base_model_id FROM model WHERE is_active = 1")
+            models = cursor.fetchall()
+            
+            synced_count = 0
+            for model in models:
+                model_id = model["id"]
+                model_name = model["name"] or model_id
+                
+                # Check if model already exists in credit system
+                existing = db.get_model_pricing(model_id)
+                if not existing:
+                    # Create model with default pricing
+                    success = db.update_model_pricing(
+                        model_id=model_id,
+                        name=model_name,
+                        context_price=0.001,  # Default context price
+                        generation_price=0.004  # Default generation price
+                    )
+                    if success:
+                        synced_count += 1
+                        db.log_action("model_sync", "sync", f"Auto-synced model {model_id} from OpenWebUI")
+            
+            if synced_count > 0:
+                print(f"✅ Synced {synced_count} new models from OpenWebUI")
+            return synced_count
+    except Exception as e:
+        print(f"Error syncing models: {e}")
+        return 0
+
 async def sync_all_users_from_openwebui():
     """Sync all users from OpenWebUI database"""
     try:
@@ -297,6 +333,7 @@ async def sync_all_users_from_openwebui():
             cursor.execute("SELECT id, name, email FROM user")
             users = cursor.fetchall()
             
+            synced_count = 0
             for user in users:
                 existing = db.get_user_credits(user["id"])
                 if not existing:
@@ -307,7 +344,55 @@ async def sync_all_users_from_openwebui():
                         transaction_type="sync",
                         reason="Initial sync from OpenWebUI"
                     )
+                    synced_count += 1
+            
+            if synced_count > 0:
+                print(f"✅ Synced {synced_count} new users from OpenWebUI")
+            return synced_count
     except Exception as e:
         print(f"Error syncing users: {e}")
+        return 0
+
+async def sync_all_from_openwebui():
+    """Sync both users and models from OpenWebUI database"""
+    user_count = await sync_all_users_from_openwebui()
+    model_count = await sync_models_from_openwebui()
+    return {"users": user_count, "models": model_count}
+
+# Manual sync endpoint
+@router.post("/api/credits/sync-users", tags=["admin"])
+async def manual_sync_users(current_user: User = Depends(get_current_admin_user)):
+    """Manually trigger user sync from OpenWebUI database"""
+    try:
+        count = await sync_all_users_from_openwebui()
+        db.log_action("manual_sync", "admin", f"Manual user sync triggered - synced {count} users")
+        return {"status": "success", "message": f"Synced {count} users successfully"}
+    except Exception as e:
+        return {"status": "error", "message": f"User sync failed: {str(e)}"}
+
+@router.post("/api/credits/sync-models", tags=["admin"])
+async def manual_sync_models(current_user: User = Depends(get_current_admin_user)):
+    """Manually trigger model sync from OpenWebUI database"""
+    try:
+        count = await sync_models_from_openwebui()
+        db.log_action("manual_sync", "admin", f"Manual model sync triggered - synced {count} models")
+        return {"status": "success", "message": f"Synced {count} models successfully"}
+    except Exception as e:
+        return {"status": "error", "message": f"Model sync failed: {str(e)}"}
+
+@router.post("/api/credits/sync-all", tags=["admin"])
+async def manual_sync_all(current_user: User = Depends(get_current_admin_user)):
+    """Manually trigger full sync of users and models from OpenWebUI database"""
+    try:
+        result = await sync_all_from_openwebui()
+        total = result["users"] + result["models"]
+        db.log_action("manual_sync", "admin", f"Manual full sync triggered - synced {result['users']} users and {result['models']} models")
+        return {
+            "status": "success", 
+            "message": f"Synced {result['users']} users and {result['models']} models successfully",
+            "details": result
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Full sync failed: {str(e)}"}
 
 

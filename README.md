@@ -1,93 +1,236 @@
-# OpenWebUI credit system
+# 💳 OpenWebUI Credit System
 
+A comprehensive credit management system for OpenWebUI with secure authentication, HTTPS support, and real-time user/model synchronization.
 
+## 🚀 Features
 
-## Getting started
+- **💰 Credit Management**: Track and manage user credits with precision
+- **🔐 Secure Authentication**: JWT-based admin authentication + API key security
+- **🔒 HTTPS Support**: Full SSL/TLS encryption with Let's Encrypt integration
+- **🔄 Real-time Sync**: Automatic synchronization with OpenWebUI database
+- **📊 Advanced Analytics**: Transaction logs and system monitoring
+- **🎯 Optimized APIs**: Efficient endpoints for high-performance operations
+- **🛡️ Input Validation**: Comprehensive security and data validation
+- **📱 Modern UI**: Responsive admin interface with dark mode support
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 🔐 Security Features
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+- JWT-based authentication for admin interface
+- API key authentication for extensions
+- Password hashing with bcrypt
+- HTTPS/SSL encryption support
+- Request validation and sanitization
+- Session management and auto-logout
+- Comprehensive audit logging
 
-## Add your files
+## 🏃‍♂️ Quick Start
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+### 1. Setup and Installation
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd openwebui-credit-system/credit_admin
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 2. Security Configuration
+
+```bash
+# Generate secure keys
+export SECRET_KEY=$(openssl rand -hex 32)
+export CREDITS_API_KEY=$(openssl rand -hex 32)
+export ADMIN_PASSWORD="your_secure_password_here"
+
+# View current security config (shows the actual generated keys)
+./show-security-config.sh
+```
+
+**📝 Note**: The `show-security-config.sh` script will display the actual API key that was generated. You'll need to copy this exact key to your OpenWebUI environment in step 5.
+
+### 3. HTTPS Setup (Optional)
+
+```bash
+# For development (self-signed)
+./setup-ssl.sh
+
+# For production (Let's Encrypt)
+./setup-ssl-production.sh yourdomain.com your-email@example.com
+```
+
+### 4. Run the Application
+
+```bash
+# HTTP mode
+python app/main.py
+
+# HTTPS mode  
+ENABLE_SSL=true python app/main.py
+
+# Docker with HTTPS
+docker-compose -f docker-compose-https.yml up -d
+```
+
+### 5. Configure OpenWebUI Extensions
+
+Set these environment variables in your OpenWebUI setup:
+
+```bash
+CREDITS_API_PROTOCOL=https
+CREDITS_API_HOST=localhost:8000
+CREDITS_API_SSL_VERIFY=false
+CREDITS_API_KEY=copy_the_exact_key_from_step_2
+```
+
+**🔑 Important**: Use the **exact same API key** that was generated in step 2. You can view it by running `./show-security-config.sh` in the credit_admin directory.
+
+## 📋 Access Points
+
+- **Admin Interface**: https://localhost:8000
+- **API Documentation**: https://localhost:8000/docs
+- **Health Check**: https://localhost:8000/health
+
+**Default Login**: `admin` / `admin123` (⚠️ Change immediately!)
+
+## 🔧 Configuration
+
+### Environment Variables
+
+```bash
+# Security
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=your_secure_password
+SECRET_KEY=your_jwt_secret_key
+CREDITS_API_KEY=your_api_key
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# Database
+OPENWEBUI_DATABASE_PATH=/path/to/openwebui/webui.db
+
+# HTTPS
+ENABLE_SSL=true
+SSL_CERT_PATH=ssl/cert.pem
+SSL_KEY_PATH=ssl/key.pem
+```
+
+### Extension Configuration
+
+Place extension files in your OpenWebUI extensions directory:
+
+- `credit_charging_filter.py` - Charges credits for usage
+- `credit_management_enough_credits.py` - Blocks requests when insufficient credits
+- `credit_management_models.py` - Shows model pricing information
+
+## 📚 Documentation
+
+- [HTTPS Setup Guide](HTTPS_SETUP.md) - Complete SSL/TLS configuration
+- [Security Documentation](SECURITY.md) - Authentication and security features
+- [Refactoring Summary](REFACTORING_SUMMARY.md) - System architecture and changes
+
+## 🛠️ Development
+
+## 🛠️ Development
+
+### Project Structure
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.kiv.zcu.cz/konopikm/openwebui-credit-system.git
-git branch -M main
-git push -uf origin main
+openwebui-credit-system/
+├── credit_admin/              # Main application
+│   ├── app/
+│   │   ├── main.py           # FastAPI application
+│   │   ├── auth.py           # Authentication system
+│   │   ├── database.py       # Database operations
+│   │   ├── config.py         # Configuration
+│   │   ├── api/
+│   │   │   ├── auth.py       # Auth endpoints
+│   │   │   └── credits_v2.py # Credit management API
+│   │   └── static/           # Web interface
+│   ├── ssl/                  # SSL certificates
+│   ├── data/                 # SQLite database
+│   └── requirements.txt      # Python dependencies
+├── extensions/               # OpenWebUI extensions
+└── functions/               # OpenWebUI functions (legacy)
 ```
 
-## Integrate with your tools
+### API Endpoints
 
-- [ ] [Set up project integrations](https://gitlab.kiv.zcu.cz/konopikm/openwebui-credit-system/-/settings/integrations)
+**Authentication:**
+- `POST /auth/login` - Admin login
+- `GET /auth/me` - Get current user
+- `POST /auth/logout` - Logout
 
-## Collaborate with your team
+**Admin APIs (require JWT):**
+- `GET /api/credits/users` - List all users
+- `GET /api/credits/models` - List all models
+- `POST /api/credits/update` - Update user credits
+- `POST /api/credits/models/update` - Update model pricing
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+**Extension APIs (require API key):**
+- `GET /api/credits/user/{user_id}` - Get user credits
+- `GET /api/credits/model/{model_id}` - Get model pricing
+- `POST /api/credits/deduct-tokens` - Deduct credits
 
-## Test and Deploy
+### Database Schema
 
-Use the built-in continuous integration in GitLab.
+- `users` - User credit balances and group assignments
+- `models` - Model pricing (context_price, generation_price)
+- `groups` - Credit groups with default allocations
+- `transactions` - Credit transaction history
+- `system_logs` - System event logging
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+## 🔄 Migration from v1.0
 
-***
+The system automatically migrates from JSON files to SQLite on first run. See [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) for details.
 
-# Editing this README
+## 🚨 Troubleshooting
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+### Common Issues
 
-## Suggestions for a good README
+1. **Login fails**: Check ADMIN_PASSWORD environment variable
+2. **Extensions can't connect**: Verify CREDITS_API_KEY matches in both systems
+3. **SSL errors**: Use `CREDITS_API_SSL_VERIFY=false` for self-signed certificates
+4. **Database sync issues**: Check OpenWebUI database path and permissions
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### Debugging
 
-## Name
-Choose a self-explaining name for your project.
+```bash
+# Check security configuration
+./show-security-config.sh
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+# Test API connectivity
+curl -H "X-API-Key: your_api_key" https://localhost:8000/health
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+# View logs
+docker-compose logs -f  # For Docker deployment
+python app/main.py      # For direct run
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## 📄 License
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+This project is licensed under the MIT License - see the [licence.txt](licence.txt) file for details.
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+## 🤝 Contributing
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+## 📞 Support
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+For issues and questions:
+- Check the documentation in this repository
+- Review the troubleshooting section
+- Check existing issues in the issue tracker
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+---
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+**⚠️ Security Notice**: Always change default credentials before production use!
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.

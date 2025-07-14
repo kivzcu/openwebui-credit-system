@@ -4,11 +4,21 @@ author: DDVVY
 version: 1.0
 """
 
+import os
 from pydantic import BaseModel, Field
 import httpx
 
 
-CREDITS_API_BASE_URL = "http://localhost:8000/api/credits"
+# Support both HTTP and HTTPS based on environment
+CREDITS_API_PROTOCOL = os.getenv("CREDITS_API_PROTOCOL", "https")  # Default to HTTPS
+CREDITS_API_HOST = os.getenv("CREDITS_API_HOST", "localhost:8000")
+CREDITS_API_BASE_URL = f"{CREDITS_API_PROTOCOL}://{CREDITS_API_HOST}/api/credits"
+
+# SSL verification settings
+SSL_VERIFY = os.getenv("CREDITS_API_SSL_VERIFY", "false").lower() == "true"
+
+# API Key for authentication
+API_KEY = os.getenv("CREDITS_API_KEY", "vY97Yvh6qKywm8xE-ErTGfUofV0t1BiZ36wR3lLNHIY")
 
 
 class Action:
@@ -26,10 +36,14 @@ class Action:
         model_name = body.get("model", "")
 
         try:
-            async with httpx.AsyncClient() as client:
+            # Set up headers with API key
+            headers = {"X-API-Key": API_KEY} if API_KEY else {}
+            
+            async with httpx.AsyncClient(verify=SSL_VERIFY) as client:
                 # Use optimized endpoint for specific model
                 res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/model/{model_name}"
+                    f"{CREDITS_API_BASE_URL}/model/{model_name}",
+                    headers=headers
                 )
                 res.raise_for_status()
                 model_data = res.json()

@@ -4,13 +4,23 @@ author: DDVVY
 version: 1.0
 """
 
+import os
 from pydantic import BaseModel, Field
 import httpx
 import tiktoken
 import re
 
 
-CREDITS_API_BASE_URL = "http://localhost:8000/api/credits"
+# Support both HTTP and HTTPS based on environment
+CREDITS_API_PROTOCOL = os.getenv("CREDITS_API_PROTOCOL", "https")  # Default to HTTPS
+CREDITS_API_HOST = os.getenv("CREDITS_API_HOST", "localhost:8000")
+CREDITS_API_BASE_URL = f"{CREDITS_API_PROTOCOL}://{CREDITS_API_HOST}/api/credits"
+
+# SSL verification settings
+SSL_VERIFY = os.getenv("CREDITS_API_SSL_VERIFY", "false").lower() == "true"
+
+# API Key for authentication
+API_KEY = os.getenv("CREDITS_API_KEY", "vY97Yvh6qKywm8xE-ErTGfUofV0t1BiZ36wR3lLNHIY")
 
 
 class Filter:
@@ -103,13 +113,18 @@ class Filter:
         completion_tokens = self.count_tokens(completion_message, model_name)
 
         try:
-            async with httpx.AsyncClient() as client:
+            # Set up headers with API key
+            headers = {"X-API-Key": API_KEY} if API_KEY else {}
+            
+            async with httpx.AsyncClient(verify=SSL_VERIFY) as client:
                 # Use optimized endpoints - get only the specific user and model we need
                 user_res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/user/{user_id}"
+                    f"{CREDITS_API_BASE_URL}/user/{user_id}",
+                    headers=headers
                 )
                 model_res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/model/{model_name}"
+                    f"{CREDITS_API_BASE_URL}/model/{model_name}",
+                    headers=headers
                 )
                 user_res.raise_for_status()
                 model_res.raise_for_status()
@@ -148,7 +163,10 @@ class Filter:
         cost = prompt_tokens * context_price + completion_tokens * generation_price
 
         try:
-            async with httpx.AsyncClient() as client:
+            # Set up headers with API key
+            headers = {"X-API-Key": API_KEY} if API_KEY else {}
+            
+            async with httpx.AsyncClient(verify=SSL_VERIFY) as client:
                 # Use the new optimized deduction endpoint
                 deduction_res = await client.post(
                     f"{CREDITS_API_BASE_URL}/deduct-tokens",
@@ -159,6 +177,7 @@ class Filter:
                         "completion_tokens": completion_tokens,
                         "actor": "auto-system",
                     },
+                    headers=headers
                 )
                 deduction_res.raise_for_status()
                 result = deduction_res.json()

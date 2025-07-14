@@ -27,4 +27,7 @@ venv/
 credit_admin/data/*.json
 credit_admin/data/*.jsonl
 
+# SSL certificates
+credit_admin/ssl/*.pem
+
 REFACTORING_SUMMARY.md
