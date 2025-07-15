@@ -772,11 +772,37 @@ async function renderTransactionLogsView() {
     const data = await res.json();
     const transactions = data.transactions || [];
 
+    // Add CSS for transaction type colors if not already added
+    if (!document.getElementById('transactionTypeStyles')) {
+      const style = document.createElement('style');
+      style.id = 'transactionTypeStyles';
+      style.textContent = `
+        .transaction-type-deduct { color: #dc3545; background-color: #f8d7da; }
+        .transaction-type-sync { color: #007bff; background-color: #d1ecf1; }
+        .transaction-type-manual_update { color: #28a745; background-color: #d4edda; }
+        .transaction-type-update { color: #28a745; background-color: #d4edda; }
+        .transaction-type-credit { color: #28a745; background-color: #d4edda; }
+        .transaction-type-auto { color: #6c757d; background-color: #e2e3e5; }
+        .transaction-type { 
+          padding: 2px 6px; 
+          border-radius: 4px; 
+          font-size: 11px; 
+          font-weight: 500; 
+          text-transform: uppercase;
+        }
+        .user-display {
+          cursor: help;
+          border-bottom: 1px dotted #6c757d;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
     let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
       <thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850">
         <tr>
           <th class="px-3 py-1.5">Timestamp</th>
-          <th class="px-3 py-1.5">User ID</th>
+          <th class="px-3 py-1.5">User</th>
           <th class="px-3 py-1.5">Amount</th>
           <th class="px-3 py-1.5">Type</th>
           <th class="px-3 py-1.5">Actor</th>
@@ -789,12 +815,22 @@ async function renderTransactionLogsView() {
     for (const transaction of transactions) {
       const timestamp = new Date(transaction.created_at).toLocaleString();
       const amountClass = transaction.amount >= 0 ? 'text-green-600' : 'text-red-600';
+      
+      // Get transaction type color class
+      const typeClass = `transaction-type transaction-type-${transaction.transaction_type.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+      
+      // Display user name with user_id tooltip
+      const userName = transaction.user_name || transaction.user_id;
+      const userDisplay = transaction.user_name 
+        ? `<span class="user-display" title="User ID: ${transaction.user_id}">${transaction.user_name}</span>`
+        : `<span class="font-mono">${transaction.user_id}</span>`;
+      
       table += `
         <tr class="bg-white dark:bg-gray-900 border-t">
           <td class="px-3 py-1 text-xs">${timestamp}</td>
-          <td class="px-3 py-1 text-xs font-mono">${transaction.user_id}</td>
+          <td class="px-3 py-1 text-xs">${userDisplay}</td>
           <td class="px-3 py-1 text-xs ${amountClass}">${transaction.amount > 0 ? '+' : ''}${transaction.amount}</td>
-          <td class="px-3 py-1 text-xs">${transaction.transaction_type}</td>
+          <td class="px-3 py-1 text-xs"><span class="${typeClass}">${transaction.transaction_type}</span></td>
           <td class="px-3 py-1 text-xs">${transaction.actor}</td>
           <td class="px-3 py-1 text-xs">${transaction.balance_after}</td>
           <td class="px-3 py-1 text-xs">${transaction.reason || ''}</td>

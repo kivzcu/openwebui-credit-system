@@ -133,15 +133,8 @@ async def get_all_users_with_credits(current_user: User = Depends(get_current_ad
     
     users = db.get_all_users_with_credits()
     
-    # Get additional user info from OpenWebUI database
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, name, email FROM user")
-            openwebui_users = {row["id"]: {"name": row["name"], "email": row["email"]} for row in cursor.fetchall()}
-    except Exception:
-        openwebui_users = {}
+    # Get additional user info from OpenWebUI database using the reusable method
+    openwebui_users = db.get_users_info_from_openwebui()
     
     result = []
     for user in users:
@@ -257,14 +250,40 @@ async def update_group_credits(request: GroupUpdateRequest, current_user: User =
 # Transaction history and logs
 @router.get("/api/credits/user/{user_id}/transactions", tags=["credits"])
 async def get_user_transaction_history(user_id: str, limit: int = Query(100, ge=1, le=1000)):
-    """Get user's transaction history"""
+    """Get user's transaction history with user name"""
     transactions = db.get_user_transactions(user_id, limit)
+    
+    # Get user name once since all transactions belong to the same user
+    if transactions:
+        users_info = db.get_users_info_from_openwebui([user_id])
+        user_info = users_info.get(user_id, {})
+        user_name = user_info.get('name') if user_info.get('name') else user_info.get('email')
+        
+        # Add user name to all transactions
+        for transaction in transactions:
+            transaction['user_name'] = user_name
+    
     return {"transactions": transactions}
 
 @router.get("/api/credits/transactions", tags=["credits"])
 async def get_all_transactions(limit: int = Query(100, ge=1, le=1000)):
-    """Get all transactions"""
+    """Get all transactions with user names (optimized)"""
     transactions = db.get_all_transactions(limit)
+    
+    if not transactions:
+        return {"transactions": []}
+    
+    # Get all unique user IDs from transactions
+    user_ids = list(set(t['user_id'] for t in transactions))
+    
+    # Fetch all user names in one query using the reusable method
+    users_info = db.get_users_info_from_openwebui(user_ids)
+    
+    # Add user names to transactions
+    for transaction in transactions:
+        user_info = users_info.get(transaction['user_id'], {})
+        transaction['user_name'] = user_info.get('name') if user_info.get('name') else user_info.get('email')
+    
     return {"transactions": transactions}
 
 @router.get("/api/credits/system-logs", tags=["credits"])

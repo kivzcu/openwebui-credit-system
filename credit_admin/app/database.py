@@ -9,9 +9,9 @@ import json
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
-from app.config import CREDITS_FILE, MODELS_FILE, GROUPS_FILE
+from app.config import CREDITS_FILE, MODELS_FILE, GROUPS_FILE, DB_FILE
 
-# New SQLite database path (separate from OpenWebUI)
+# Ne    # ...existing code...path (separate from OpenWebUI)
 CREDITS_DB_PATH = "/root/sources/openwebui-credit-system/credit_admin/data/credits.db"
 
 class CreditDatabase:
@@ -329,9 +329,10 @@ class CreditDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT * FROM credit_transactions 
-                WHERE user_id = ? 
-                ORDER BY created_at DESC 
+                SELECT ct.*
+                FROM credit_transactions ct
+                WHERE ct.user_id = ? 
+                ORDER BY ct.created_at DESC 
                 LIMIT ?
             """, (user_id, limit))
             return [dict(row) for row in cursor.fetchall()]
@@ -341,8 +342,9 @@ class CreditDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT * FROM credit_transactions 
-                ORDER BY created_at DESC 
+                SELECT ct.*
+                FROM credit_transactions ct
+                ORDER BY ct.created_at DESC 
                 LIMIT ?
             """, (limit,))
             return [dict(row) for row in cursor.fetchall()]
@@ -368,6 +370,56 @@ class CreditDatabase:
                 LIMIT ?
             """, (limit,))
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_user_name_from_openwebui(self, user_id: str) -> Optional[str]:
+        """Get user name from OpenWebUI database"""
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT name, email FROM user WHERE id = ?", (user_id,))
+            row = cursor.fetchone()
+            conn.close()
+            
+            if row:
+                return row['name'] if row['name'] else row['email']
+            return None
+        except Exception as e:
+            print(f"Error fetching user name from OpenWebUI: {e}")
+            return None
+
+    def get_users_info_from_openwebui(self, user_ids: Optional[List[str]] = None) -> Dict[str, Dict[str, str]]:
+        """
+        Get user information from OpenWebUI database.
+        If user_ids is None, gets all users. Otherwise gets specific users.
+        Returns dict with user_id as key and dict with name/email as value.
+        """
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            if user_ids is None:
+                # Get all users
+                cursor.execute("SELECT id, name, email FROM user")
+            else:
+                # Get specific users
+                placeholders = ','.join('?' * len(user_ids))
+                cursor.execute(f"SELECT id, name, email FROM user WHERE id IN ({placeholders})", user_ids)
+            
+            result = {}
+            for row in cursor.fetchall():
+                result[row["id"]] = {
+                    "name": row["name"],
+                    "email": row["email"]
+                }
+            
+            conn.close()
+            return result
+            
+        except Exception as e:
+            print(f"Error fetching user info from OpenWebUI: {e}")
+            return {}
 
 # Global database instance
 db = CreditDatabase()
