@@ -57,6 +57,20 @@
             gap: 20px;
             align-items: center;
             flex-wrap: wrap;
+            justify-content: space-between;
+        }
+
+        .left-controls {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex: 1;
+        }
+
+        .right-controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
         }
 
         .search-box {
@@ -119,6 +133,44 @@
             background: #3498db;
             color: white;
             border-color: #3498db;
+        }
+
+        .multiplier-selector {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .multiplier-label {
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 14px;
+        }
+
+        .multiplier-btn {
+            padding: 10px 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 20px;
+            background: white;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            min-width: 120px;
+            text-align: center;
+        }
+
+        .multiplier-btn:focus {
+            outline: none;
+        }
+
+        .multiplier-btn:hover {
+            border-color: #3498db;
+            background: #f8f9fa;
+        }
+
+        .multiplier-btn:active {
+            transform: scale(0.98);
         }
 
         .models-grid {
@@ -293,23 +345,33 @@
 
         <div class="controls">
             <div class="search-sort-container">
-                <div class="search-box">
-                    <div class="search-icon">🔍</div>
-                    <input type="text" class="search-input" placeholder="Search models..." id="searchInput">
+                <div class="left-controls">
+                    <div class="search-box">
+                        <div class="search-icon">🔍</div>
+                        <input type="text" class="search-input" placeholder="Search models..." id="searchInput">
+                    </div>
                 </div>
-                <div class="sort-controls">
-                    <button class="sort-btn active" data-sort="name" data-direction="asc">
-                        📝 Name A-Z
-                    </button>
-                    <button class="sort-btn" data-sort="name" data-direction="desc">
-                        📝 Name Z-A
-                    </button>
-                    <button class="sort-btn" data-sort="context_price" data-direction="asc">
-                        💰 Price Low
-                    </button>
-                    <button class="sort-btn" data-sort="context_price" data-direction="desc">
-                        💰 Price High
-                    </button>
+                
+                <div class="right-controls">
+                    <div class="multiplier-selector">
+                        <span class="multiplier-label">Credits per:</span>
+                        <button id="multiplierToggle" class="multiplier-btn">1K tokens</button>
+                    </div>
+                    
+                    <div class="sort-controls">
+                        <button class="sort-btn active" data-sort="name" data-direction="asc">
+                            📝 Name A-Z
+                        </button>
+                        <button class="sort-btn" data-sort="name" data-direction="desc">
+                            📝 Name Z-A
+                        </button>
+                        <button class="sort-btn" data-sort="context_price" data-direction="asc">
+                            💰 Credits Low
+                        </button>
+                        <button class="sort-btn" data-sort="context_price" data-direction="desc">
+                            💰 Credits High
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -352,6 +414,13 @@
                 this.filteredModels = [];
                 this.currentSort = { field: 'name', direction: 'asc' };
                 this.searchTerm = '';
+                this.multiplier = 1000; // Default to 1K tokens
+                this.multiplierOptions = [
+                    { value: 1, label: '1 token' },
+                    { value: 1000, label: '1K tokens' },
+                    { value: 1000000, label: '1M tokens' }
+                ];
+                this.currentMultiplierIndex = 1; // Start with 1K tokens
                 
                 this.initializeElements();
                 this.attachEventListeners();
@@ -360,6 +429,7 @@
 
             initializeElements() {
                 this.searchInput = document.getElementById('searchInput');
+                this.multiplierToggle = document.getElementById('multiplierToggle');
                 this.modelsContainer = document.getElementById('modelsContainer');
                 this.loadingState = document.getElementById('loadingState');
                 this.noResults = document.getElementById('noResults');
@@ -372,6 +442,15 @@
                 // Search functionality
                 this.searchInput.addEventListener('input', (e) => {
                     this.searchTerm = e.target.value.toLowerCase();
+                    this.filterAndRenderModels();
+                });
+
+                // Multiplier toggle functionality
+                this.multiplierToggle.addEventListener('click', () => {
+                    this.currentMultiplierIndex = (this.currentMultiplierIndex + 1) % this.multiplierOptions.length;
+                    const option = this.multiplierOptions[this.currentMultiplierIndex];
+                    this.multiplier = option.value;
+                    this.multiplierToggle.textContent = option.label;
                     this.filterAndRenderModels();
                 });
 
@@ -464,11 +543,11 @@
                         </div>
                         <div class="pricing-info">
                             <div class="price-item">
-                                <div class="price-label">Context Price</div>
+                                <div class="price-label">Context Credits ${this.getPriceUnit()}</div>
                                 <div class="price-value">${this.formatPrice(model.context_price)}</div>
                             </div>
                             <div class="price-item">
-                                <div class="price-label">Generation Price</div>
+                                <div class="price-label">Generation Credits ${this.getPriceUnit()}</div>
                                 <div class="price-value">${this.formatPrice(model.generation_price)}</div>
                             </div>
                         </div>
@@ -487,11 +566,33 @@
                 return '🤖';
             }
 
+            getPriceUnit() {
+                switch (this.multiplier) {
+                    case 1: return '(per token)';
+                    case 1000: return '(per 1K tokens)';
+                    case 1000000: return '(per 1M tokens)';
+                    default: return `(per ${this.multiplier} tokens)`;
+                }
+            }
+
             formatPrice(price) {
                 const numPrice = parseFloat(price) || 0;
-                if (numPrice === 0) return 'Free';
-                if (numPrice < 0.001) return numPrice.toExponential(2);
-                return numPrice.toFixed(6);
+                const adjustedPrice = numPrice * this.multiplier;
+                
+                if (adjustedPrice === 0) return 'Free';
+                
+                // Format based on the size of the adjusted price
+                if (adjustedPrice < 0.000001) {
+                    return adjustedPrice.toExponential(2);
+                } else if (adjustedPrice < 0.001) {
+                    return adjustedPrice.toFixed(6);
+                } else if (adjustedPrice < 1) {
+                    return adjustedPrice.toFixed(4);
+                } else if (adjustedPrice < 100) {
+                    return adjustedPrice.toFixed(3);
+                } else {
+                    return adjustedPrice.toFixed(2);
+                }
             }
 
             updateStats() {

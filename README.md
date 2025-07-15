@@ -116,6 +116,7 @@ The public pricing page provides:
 - **Model Availability**: Only shows models currently available in OpenWebUI
 - **Live Search**: Instant filtering by model name or ID
 - **Smart Sorting**: Sort by name (A-Z, Z-A) or price (Low/High)
+- **Flexible Pricing Units**: View prices per token, per 1K tokens (default), or per 1M tokens
 - **No Authentication**: Public access for transparency
 
 ## 🔧 Configuration
