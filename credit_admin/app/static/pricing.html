@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model Pricing - Credit System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .controls {
+            padding: 30px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .search-sort-container {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .search-box {
+            flex: 1;
+            min-width: 300px;
+            position: relative;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 15px 20px 15px 50px;
+            border: 2px solid #e9ecef;
+            border-radius: 50px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #6c757d;
+            font-size: 18px;
+        }
+
+        .sort-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .sort-btn {
+            padding: 12px 20px;
+            border: 2px solid #e9ecef;
+            background: white;
+            border-radius: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sort-btn:hover {
+            border-color: #3498db;
+            background: #3498db;
+            color: white;
+        }
+
+        .sort-btn.active {
+            background: #3498db;
+            color: white;
+            border-color: #3498db;
+        }
+
+        .models-grid {
+            padding: 30px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 25px;
+        }
+
+        .model-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            border: 1px solid #e9ecef;
+        }
+
+        .model-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+        }
+
+        .model-name {
+            font-size: 1.4rem;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .model-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .pricing-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .price-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .price-label {
+            font-size: 0.9rem;
+            color: #6c757d;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        .price-value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 60px 30px;
+            color: #6c757d;
+        }
+
+        .no-results-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px 30px;
+            color: #6c757d;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .footer {
+            background: #2c3e50;
+            color: white;
+            text-align: center;
+            padding: 20px;
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+
+        .stats-bar {
+            background: #e9ecef;
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 500;
+            color: #495057;
+        }
+
+        .stats-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .search-sort-container {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .search-box {
+                min-width: auto;
+            }
+
+            .sort-controls {
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+
+            .models-grid {
+                grid-template-columns: 1fr;
+                padding: 20px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .pricing-info {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏷️ Model Pricing</h1>
+            <p>Transparent pricing for all available AI models</p>
+            <p style="font-size: 0.9rem; opacity: 0.8; margin-top: 10px;">
+                ℹ️ Only models currently available in your OpenWebUI instance are shown
+            </p>
+        </div>
+
+        <div class="controls">
+            <div class="search-sort-container">
+                <div class="search-box">
+                    <div class="search-icon">🔍</div>
+                    <input type="text" class="search-input" placeholder="Search models..." id="searchInput">
+                </div>
+                <div class="sort-controls">
+                    <button class="sort-btn active" data-sort="name" data-direction="asc">
+                        📝 Name A-Z
+                    </button>
+                    <button class="sort-btn" data-sort="name" data-direction="desc">
+                        📝 Name Z-A
+                    </button>
+                    <button class="sort-btn" data-sort="context_price" data-direction="asc">
+                        💰 Price Low
+                    </button>
+                    <button class="sort-btn" data-sort="context_price" data-direction="desc">
+                        💰 Price High
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="stats-bar">
+            <div class="stats-item">
+                <span>📊</span>
+                <span id="modelCount">Loading...</span>
+            </div>
+            <div class="stats-item">
+                <span>🔍</span>
+                <span id="filteredCount">-</span>
+            </div>
+        </div>
+
+        <div id="loadingState" class="loading">
+            <div class="spinner"></div>
+            <p>Loading model pricing information...</p>
+        </div>
+
+        <div id="modelsContainer" class="models-grid" style="display: none;">
+            <!-- Models will be rendered here -->
+        </div>
+
+        <div id="noResults" class="no-results" style="display: none;">
+            <div class="no-results-icon">😕</div>
+            <h3>No models found</h3>
+            <p>Try adjusting your search terms or sorting options</p>
+        </div>
+
+        <div class="footer">
+            <p>💳 Credit Management System - Real-time pricing information</p>
+        </div>
+    </div>
+
+    <script>
+        class ModelPricingApp {
+            constructor() {
+                this.models = [];
+                this.filteredModels = [];
+                this.currentSort = { field: 'name', direction: 'asc' };
+                this.searchTerm = '';
+                
+                this.initializeElements();
+                this.attachEventListeners();
+                this.loadModels();
+            }
+
+            initializeElements() {
+                this.searchInput = document.getElementById('searchInput');
+                this.modelsContainer = document.getElementById('modelsContainer');
+                this.loadingState = document.getElementById('loadingState');
+                this.noResults = document.getElementById('noResults');
+                this.modelCount = document.getElementById('modelCount');
+                this.filteredCount = document.getElementById('filteredCount');
+                this.sortButtons = document.querySelectorAll('.sort-btn');
+            }
+
+            attachEventListeners() {
+                // Search functionality
+                this.searchInput.addEventListener('input', (e) => {
+                    this.searchTerm = e.target.value.toLowerCase();
+                    this.filterAndRenderModels();
+                });
+
+                // Sort functionality
+                this.sortButtons.forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const sortField = e.target.dataset.sort;
+                        const sortDirection = e.target.dataset.direction;
+                        
+                        // Update active button
+                        this.sortButtons.forEach(b => b.classList.remove('active'));
+                        e.target.classList.add('active');
+                        
+                        this.currentSort = { field: sortField, direction: sortDirection };
+                        this.filterAndRenderModels();
+                    });
+                });
+            }
+
+            async loadModels() {
+                try {
+                    const response = await fetch('/api/public/models/pricing');
+                    if (!response.ok) throw new Error('Failed to load models');
+                    
+                    this.models = await response.json();
+                    this.updateStats();
+                    this.filterAndRenderModels();
+                    
+                    // Hide loading, show content
+                    this.loadingState.style.display = 'none';
+                    this.modelsContainer.style.display = 'grid';
+                    
+                } catch (error) {
+                    console.error('Error loading models:', error);
+                    this.loadingState.innerHTML = `
+                        <div style="color: #e74c3c;">
+                            <h3>❌ Error Loading Models</h3>
+                            <p>Failed to fetch model pricing data. Please try refreshing the page.</p>
+                        </div>
+                    `;
+                }
+            }
+
+            filterAndRenderModels() {
+                // Filter models based on search term
+                this.filteredModels = this.models.filter(model => 
+                    model.name.toLowerCase().includes(this.searchTerm) ||
+                    model.id.toLowerCase().includes(this.searchTerm)
+                );
+
+                // Sort models
+                this.filteredModels.sort((a, b) => {
+                    const { field, direction } = this.currentSort;
+                    let valueA, valueB;
+
+                    if (field === 'name') {
+                        valueA = a.name.toLowerCase();
+                        valueB = b.name.toLowerCase();
+                    } else {
+                        valueA = parseFloat(a[field]) || 0;
+                        valueB = parseFloat(b[field]) || 0;
+                    }
+
+                    if (direction === 'asc') {
+                        return valueA < valueB ? -1 : valueA > valueB ? 1 : 0;
+                    } else {
+                        return valueA > valueB ? -1 : valueA < valueB ? 1 : 0;
+                    }
+                });
+
+                this.renderModels();
+                this.updateFilteredCount();
+            }
+
+            renderModels() {
+                if (this.filteredModels.length === 0) {
+                    this.modelsContainer.style.display = 'none';
+                    this.noResults.style.display = 'block';
+                    return;
+                }
+
+                this.modelsContainer.style.display = 'grid';
+                this.noResults.style.display = 'none';
+
+                this.modelsContainer.innerHTML = this.filteredModels.map(model => `
+                    <div class="model-card">
+                        <div class="model-name">
+                            <div class="model-icon">${this.getModelIcon(model.name)}</div>
+                            <span>${model.name}</span>
+                        </div>
+                        <div class="pricing-info">
+                            <div class="price-item">
+                                <div class="price-label">Context Price</div>
+                                <div class="price-value">${this.formatPrice(model.context_price)}</div>
+                            </div>
+                            <div class="price-item">
+                                <div class="price-label">Generation Price</div>
+                                <div class="price-value">${this.formatPrice(model.generation_price)}</div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            getModelIcon(modelName) {
+                const name = modelName.toLowerCase();
+                if (name.includes('gpt') || name.includes('openai')) return '🧠';
+                if (name.includes('claude')) return '🤖';
+                if (name.includes('llama')) return '🦙';
+                if (name.includes('gemini') || name.includes('bard')) return '💎';
+                if (name.includes('mistral')) return '🌪️';
+                if (name.includes('codellama') || name.includes('code')) return '💻';
+                return '🤖';
+            }
+
+            formatPrice(price) {
+                const numPrice = parseFloat(price) || 0;
+                if (numPrice === 0) return 'Free';
+                if (numPrice < 0.001) return numPrice.toExponential(2);
+                return numPrice.toFixed(6);
+            }
+
+            updateStats() {
+                this.modelCount.textContent = `${this.models.length} models available`;
+            }
+
+            updateFilteredCount() {
+                if (this.searchTerm) {
+                    this.filteredCount.textContent = `${this.filteredModels.length} filtered results`;
+                } else {
+                    this.filteredCount.textContent = `${this.filteredModels.length} models shown`;
+                }
+            }
+        }
+
+        // Initialize the app when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new ModelPricingApp();
+        });
+    </script>
+</body>
+</html>

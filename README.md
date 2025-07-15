@@ -5,6 +5,7 @@ A comprehensive credit management system for OpenWebUI with secure authenticatio
 ## 🚀 Features
 
 - **💰 Credit Management**: Track and manage user credits with precision
+- **🏷️ Public Pricing Page**: Modern, searchable pricing interface (no login required)
 - **🔐 Secure Authentication**: JWT-based admin authentication + API key security
 - **🔒 HTTPS Support**: Full SSL/TLS encryption with Let's Encrypt integration
 - **🔄 Real-time Sync**: Automatic synchronization with OpenWebUI database
@@ -12,6 +13,7 @@ A comprehensive credit management system for OpenWebUI with secure authenticatio
 - **🎯 Optimized APIs**: Efficient endpoints for high-performance operations
 - **🛡️ Input Validation**: Comprehensive security and data validation
 - **📱 Modern UI**: Responsive admin interface with dark mode support
+- **⚡ Smart Model Filtering**: Only shows available models to users
 
 ## 🔐 Security Features
 
@@ -67,11 +69,17 @@ export ADMIN_PASSWORD="your_secure_password_here"
 ### 4. Run the Application
 
 ```bash
-# HTTP mode
+# HTTP mode (default port 8000)
 python app/main.py
+
+# Custom port
+PORT=3000 python app/main.py
 
 # HTTPS mode  
 ENABLE_SSL=true python app/main.py
+
+# HTTPS mode with custom port
+ENABLE_SSL=true PORT=3000 python app/main.py
 
 # Docker with HTTPS
 docker-compose -f docker-compose-https.yml up -d
@@ -92,17 +100,32 @@ CREDITS_API_KEY=copy_the_exact_key_from_step_2
 
 ## 📋 Access Points
 
-- **Admin Interface**: https://localhost:8000
+- **Admin Interface**: https://localhost:8000 (or your configured PORT)
+- **Public Pricing Page**: https://localhost:8000/pricing (no login required)
 - **API Documentation**: https://localhost:8000/docs
 - **Health Check**: https://localhost:8000/health
 
 **Default Login**: `admin` / `admin123` (⚠️ Change immediately!)
+
+**Port Configuration**: The default port is 8000, but you can change it using the `PORT` environment variable.
+
+### 🏷️ Public Pricing Features
+
+The public pricing page provides:
+- **Modern UI**: Responsive design with real-time search and sorting
+- **Model Availability**: Only shows models currently available in OpenWebUI
+- **Live Search**: Instant filtering by model name or ID
+- **Smart Sorting**: Sort by name (A-Z, Z-A) or price (Low/High)
+- **No Authentication**: Public access for transparency
 
 ## 🔧 Configuration
 
 ### Environment Variables
 
 ```bash
+# Application
+PORT=8000
+
 # Security
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your_secure_password
@@ -175,6 +198,33 @@ openwebui-credit-system/
 - `GET /api/credits/user/{user_id}` - Get user credits
 - `GET /api/credits/model/{model_id}` - Get model pricing
 - `POST /api/credits/deduct-tokens` - Deduct credits
+
+### 🔌 API Endpoints
+
+#### Public Endpoints (No Authentication)
+- `GET /pricing` - Public pricing page with modern UI
+- `GET /api/public/models/pricing` - JSON API for available model pricing
+- `GET /health` - System health check
+
+#### Admin Endpoints (JWT Authentication Required)
+- `GET /api/credits/users` - List all users with credit information
+- `GET /api/credits/models` - List all models with availability status
+- `POST /api/credits/update` - Update user credits
+- `POST /api/credits/models/update` - Update model pricing
+- `POST /api/credits/sync-all` - Manual sync from OpenWebUI
+
+#### Extension Endpoints (API Key Authentication)
+- `GET /api/credits/user/{user_id}` - Get user credit information
+- `GET /api/credits/model/{model_id}` - Get model pricing
+- `POST /api/credits/deduct-tokens` - Deduct credits for token usage
+
+### 📊 Model Availability Management
+
+The system automatically tracks which models are available in OpenWebUI:
+- **Efficient Sync**: Availability status cached locally during database sync
+- **Real-time Updates**: Changes reflected immediately in public pricing
+- **Admin Visibility**: Clear status indicators (✅ Available / ❌ Unavailable)
+- **Performance**: No repeated database queries to OpenWebUI
 
 ### Database Schema
 

@@ -69,7 +69,7 @@ async def get_model_pricing(model_id: str, _: bool = Depends(verify_api_key)):
     
     if not model_data:
         # Auto-create model with default pricing if not exists
-        db.update_model_pricing(model_id, model_id, 0.001, 0.004)  # Updated default pricing
+        db.update_model_pricing(model_id, model_id, 0.001, 0.004, True)  # Default to available
         model_data = db.get_model_pricing(model_id)
         db.log_action("model_auto_created", "system", f"Auto-created model {model_id} with default pricing")
         
@@ -160,14 +160,17 @@ async def get_all_users_with_credits(current_user: User = Depends(get_current_ad
 
 @router.get("/api/credits/models", tags=["credits"])
 async def get_all_models(current_user: User = Depends(get_current_admin_user)):
-    """Get all model pricing information - for admin UI"""
+    """Get all model pricing information with availability status - for admin UI"""
+    # Get all models from our local database (availability is already stored)
     models = db.get_all_models()
+    
     return [
         {
             "id": model["id"],
             "name": model["name"],
             "context_price": model["context_price"],
-            "generation_price": model["generation_price"]
+            "generation_price": model["generation_price"],
+            "is_available": model.get("is_available", True)  # Default to True for backward compatibility
         }
         for model in models
     ]
@@ -205,12 +208,17 @@ async def update_user_credits(request: CreditUpdateRequest, current_user: User =
 
 @router.post("/api/credits/models/update", tags=["credits"])
 async def update_model_pricing(request: ModelPricingRequest, current_user: User = Depends(get_current_admin_user)):
-    """Update model pricing"""
+    """Update model pricing (preserves availability status)"""
+    # Get current model data to preserve availability status
+    current_model = db.get_model_pricing(request.model_id)
+    current_availability = current_model.get("is_available", True) if current_model else True
+    
     success = db.update_model_pricing(
         model_id=request.model_id,
         name=request.model_id,  # Use ID as name if not provided
         context_price=request.context_price,
-        generation_price=request.generation_price
+        generation_price=request.generation_price,
+        is_available=current_availability  # Preserve current availability status
     )
     
     if success:
@@ -265,6 +273,27 @@ async def get_system_logs(limit: int = Query(100, ge=1, le=1000)):
     logs = db.get_logs(limit)
     return {"logs": logs}
 
+# Public endpoint for model pricing
+@router.get("/api/public/models/pricing", tags=["public"])
+async def get_public_model_pricing():
+    """Get pricing for only available models - public endpoint (no authentication required)"""
+    # Get all models from our local database and filter by availability
+    all_models = db.get_all_models()
+    
+    # Filter to only include models that are available (stored locally)
+    available_models = [
+        {
+            "id": model["id"],
+            "name": model["name"],
+            "context_price": model["context_price"],
+            "generation_price": model["generation_price"]
+        }
+        for model in all_models
+        if model.get("is_available", True)  # Default to True for backward compatibility
+    ]
+    
+    return available_models
+
 # Sync functions
 async def sync_user_from_openwebui(user_id: str):
     """Sync a single user from OpenWebUI database"""
@@ -290,36 +319,60 @@ async def sync_user_from_openwebui(user_id: str):
     return False
 
 async def sync_models_from_openwebui():
-    """Sync all models from OpenWebUI database"""
+    """Sync all models from OpenWebUI database with availability status"""
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, base_model_id FROM model WHERE is_active = 1")
+            cursor.execute("SELECT id, name, base_model_id, is_active FROM model")
             models = cursor.fetchall()
             
+            # Get current available model IDs from OpenWebUI
+            available_model_ids = set()
+            for model in models:
+                if model["is_active"]:
+                    available_model_ids.add(model["id"])
+            
+            # Get all models from our local database
+            local_models = db.get_all_models()
+            local_model_ids = {model["id"] for model in local_models}
+            
             synced_count = 0
+            updated_count = 0
+            
+            # Update availability for all models
             for model in models:
                 model_id = model["id"]
                 model_name = model["name"] or model_id
+                is_available = bool(model["is_active"])
                 
-                # Check if model already exists in credit system
-                existing = db.get_model_pricing(model_id)
-                if not existing:
-                    # Create model with default pricing
+                if model_id in local_model_ids:
+                    # Update existing model availability
+                    if db.update_model_availability(model_id, is_available):
+                        updated_count += 1
+                else:
+                    # Create new model with availability status
                     success = db.update_model_pricing(
                         model_id=model_id,
                         name=model_name,
                         context_price=0.001,  # Default context price
-                        generation_price=0.004  # Default generation price
+                        generation_price=0.004,  # Default generation price
+                        is_available=is_available
                     )
                     if success:
                         synced_count += 1
-                        db.log_action("model_sync", "sync", f"Auto-synced model {model_id} from OpenWebUI")
+                        db.log_action("model_sync", "sync", f"Auto-synced model {model_id} from OpenWebUI (available: {is_available})")
             
-            if synced_count > 0:
-                print(f"✅ Synced {synced_count} new models from OpenWebUI")
-            return synced_count
+            # Mark models as unavailable if they no longer exist in OpenWebUI
+            openwebui_model_ids = {model["id"] for model in models}
+            for local_model in local_models:
+                if local_model["id"] not in openwebui_model_ids:
+                    if db.update_model_availability(local_model["id"], False):
+                        updated_count += 1
+            
+            if synced_count > 0 or updated_count > 0:
+                print(f"✅ Model sync: {synced_count} new, {updated_count} updated")
+            return synced_count + updated_count
     except Exception as e:
         print(f"Error syncing models: {e}")
         return 0

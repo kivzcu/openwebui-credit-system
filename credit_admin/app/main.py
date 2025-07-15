@@ -13,8 +13,11 @@ from app.database import db
 from app.config import DB_FILE
 from app.auth import print_security_config
 
-# SSL Configuration
+# Configuration
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Go up to credit_admin/
+PORT = int(os.getenv("PORT", "8000"))
+
+# SSL Configuration
 SSL_CERT_PATH = os.getenv("SSL_CERT_PATH", os.path.join(BASE_DIR, "ssl", "cert.pem"))
 SSL_KEY_PATH = os.getenv("SSL_KEY_PATH", os.path.join(BASE_DIR, "ssl", "key.pem"))
 ENABLE_SSL = os.getenv("ENABLE_SSL", "false").lower() == "true"
@@ -103,6 +106,12 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 def serve_index():
     return FileResponse(index_file)
 
+@app.get("/pricing")
+def serve_pricing():
+    """Public pricing page - no authentication required"""
+    pricing_file = os.path.join(static_dir, "pricing.html")
+    return FileResponse(pricing_file)
+
 # Include routers
 app.include_router(auth.router)
 app.include_router(credits_v2.router)
@@ -125,7 +134,7 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     if ENABLE_SSL:
-        print(f"🔒 Starting with SSL enabled")
+        print(f"🔒 Starting with SSL enabled on port {PORT}")
         print(f"📄 SSL Certificate: {SSL_CERT_PATH}")
         print(f"🔑 SSL Key: {SSL_KEY_PATH}")
         
@@ -140,11 +149,12 @@ if __name__ == "__main__":
         uvicorn.run(
             "app.main:app", 
             host="0.0.0.0", 
-            port=8000, 
+            port=PORT, 
             reload=True,
             ssl_certfile=SSL_CERT_PATH,
             ssl_keyfile=SSL_KEY_PATH
         )
     else:
-        uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+        print(f"🌐 Starting on port {PORT}")
+        uvicorn.run("app.main:app", host="0.0.0.0", port=PORT, reload=True)
 

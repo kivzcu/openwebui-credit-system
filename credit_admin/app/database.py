@@ -63,10 +63,18 @@ class CreditDatabase:
                     name TEXT NOT NULL,
                     context_price REAL NOT NULL DEFAULT 0.001,  -- cost per input token
                     generation_price REAL NOT NULL DEFAULT 0.004,  -- cost per output token
+                    is_available BOOLEAN NOT NULL DEFAULT 1,  -- availability in OpenWebUI
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # Add is_available column if it doesn't exist (migration)
+            try:
+                cursor.execute("ALTER TABLE credit_models ADD COLUMN is_available BOOLEAN NOT NULL DEFAULT 1")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
             
             # Transaction history
             cursor.execute("""
@@ -273,15 +281,26 @@ class CreditDatabase:
             cursor.execute("SELECT * FROM credit_models ORDER BY name")
             return [dict(row) for row in cursor.fetchall()]
     
-    def update_model_pricing(self, model_id: str, name: str, context_price: float, 
-                           generation_price: float) -> bool:
-        """Update model pricing"""
+    def update_model_availability(self, model_id: str, is_available: bool) -> bool:
+        """Update model availability status only"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT OR REPLACE INTO credit_models (id, name, context_price, generation_price, updated_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (model_id, name, context_price, generation_price))
+                UPDATE credit_models SET is_available = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (is_available, model_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def update_model_pricing(self, model_id: str, name: str, context_price: float, 
+                           generation_price: float, is_available: bool = True) -> bool:
+        """Update model pricing and availability status"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO credit_models (id, name, context_price, generation_price, is_available, updated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (model_id, name, context_price, generation_price, is_available))
             conn.commit()
             return True
     

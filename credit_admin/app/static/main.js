@@ -185,6 +185,57 @@ function filterGroups(query) {
 }
 
 
+function filterModelsByStatus(status) {
+  const rows = document.querySelectorAll("#mainContent table tbody tr");
+  rows.forEach(row => {
+    const statusCell = row.querySelector('td:nth-child(2)');
+    if (!statusCell) return;
+    
+    const isAvailable = statusCell.textContent.includes('Available') && !statusCell.textContent.includes('Unavailable');
+    
+    let shouldShow = true;
+    if (status === 'available' && !isAvailable) {
+      shouldShow = false;
+    } else if (status === 'unavailable' && isAvailable) {
+      shouldShow = false;
+    }
+    
+    row.style.display = shouldShow ? "" : "none";
+  });
+  
+  // Update the dropdown to match the filter
+  const statusFilter = document.getElementById('statusFilter');
+  if (statusFilter) {
+    statusFilter.value = status;
+  }
+  
+  // Update legend highlighting
+  updateLegendHighlight(status);
+}
+
+function updateLegendHighlight(activeFilter) {
+  // Remove existing highlights
+  const legendItems = document.querySelectorAll('.legend-item');
+  legendItems.forEach(item => {
+    item.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-50', 'dark:bg-blue-900/20');
+  });
+  
+  // Add highlight to active filter
+  let activeItem = null;
+  if (activeFilter === 'available') {
+    activeItem = document.querySelector('[onclick="filterModelsByStatus(\'available\')"]');
+  } else if (activeFilter === 'unavailable') {
+    activeItem = document.querySelector('[onclick="filterModelsByStatus(\'unavailable\')"]');
+  } else if (activeFilter === 'all') {
+    activeItem = document.querySelector('[onclick="filterModelsByStatus(\'all\')"]');
+  }
+  
+  if (activeItem) {
+    activeItem.classList.add('ring-2', 'ring-blue-500', 'bg-blue-50', 'dark:bg-blue-900/20');
+  }
+}
+
+
 async function renderUsersView() {
   const container = document.getElementById('mainContent');
   container.innerHTML = '<h2 class="text-2xl font-bold mb-4">User Credit Management</h2>';
@@ -519,14 +570,24 @@ async function renderModelsView() {
   container.innerHTML = `
   <div class="flex items-center justify-between mb-4">
     <h2 class="text-2xl font-bold">Model Pricing Management</h2>
-    <div class="flex items-center border border-gray-300 dark:border-gray-700 rounded-xl px-2 py-1 w-64 bg-white dark:bg-gray-900">
-      <div class="self-center mr-2 text-gray-500 dark:text-gray-400">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
-          <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
-        </svg>
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2">
+        <label class="text-sm font-medium">Filter:</label>
+        <select id="statusFilter" onchange="filterModelsByStatus(this.value)" class="px-2 py-1 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-900 text-sm">
+          <option value="all">All Models</option>
+          <option value="available">Available Only</option>
+          <option value="unavailable">Unavailable Only</option>
+        </select>
       </div>
-      <input class="w-full text-sm bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
-             placeholder="Search" oninput="filterModels(this.value)">
+      <div class="flex items-center border border-gray-300 dark:border-gray-700 rounded-xl px-2 py-1 w-64 bg-white dark:bg-gray-900">
+        <div class="self-center mr-2 text-gray-500 dark:text-gray-400">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
+            <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
+          </svg>
+        </div>
+        <input class="w-full text-sm bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
+               placeholder="Search models..." oninput="filterModels(this.value)">
+      </div>
     </div>
   </div>`;
 
@@ -539,6 +600,7 @@ async function renderModelsView() {
       <thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850">
         <tr>
           <th class="px-3 py-1.5">Model</th>
+          <th class="px-3 py-1.5">Status</th>
           <th class="px-3 py-1.5">Context Token Price</th>
           <th class="px-3 py-1.5">Generation Token Price</th>
           <th class="px-3 py-1.5 text-right">Actions</th>
@@ -547,18 +609,50 @@ async function renderModelsView() {
       <tbody>`;
 
     for (const model of currentModels) {
+      const isAvailable = model.is_available === true || model.is_available === 1;
+      const statusBadge = isAvailable
+        ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><span class="w-2 h-2 bg-green-400 rounded-full mr-1.5"></span>Available</span>'
+        : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"><span class="w-2 h-2 bg-red-400 rounded-full mr-1.5"></span>Unavailable</span>';
+      
+      const rowClass = 'bg-white dark:bg-gray-900 border-t';
+      
+      const nameClass = '';
+      const priceClass = '';
+        
       table += `
-        <tr class="bg-white dark:bg-gray-900 border-t">
-          <td class="px-3 py-1">${model.name}</td>
-          <td class="px-3 py-1">${model.context_price}</td>
-          <td class="px-3 py-1">${model.generation_price}</td>
+        <tr class="${rowClass}">
+          <td class="px-3 py-1 ${nameClass}">${model.name}</td>
+          <td class="px-3 py-1">${statusBadge}</td>
+          <td class="px-3 py-1 ${priceClass}">${model.context_price}</td>
+          <td class="px-3 py-1 ${priceClass}">${model.generation_price}</td>
           <td class="px-3 py-1 text-right">
-            <button class="px-2 py-1 text-sm bg-blue-600 text-white rounded" onclick="editModel('${model.id}')">Edit</button>
+            <button class="px-2 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700" onclick="editModel('${model.id}')">Edit</button>
           </td>
         </tr>`;
     }
 
     table += '</tbody></table>';
+
+    // Add model summary
+    const availableCount = currentModels.filter(m => m.is_available === true || m.is_available === 1).length;
+    const unavailableCount = currentModels.length - availableCount;
+
+    container.innerHTML += `
+      <div class="flex items-center gap-4 mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors" onclick="filterModelsByStatus('available')" title="Click to show only available models">
+          <span class="w-3 h-3 bg-green-400 rounded-full"></span>
+          <span class="text-sm"><strong>${availableCount}</strong> Available Models</span>
+        </div>
+        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors" onclick="filterModelsByStatus('unavailable')" title="Click to show only unavailable models">
+          <span class="w-3 h-3 bg-red-400 rounded-full"></span>
+          <span class="text-sm"><strong>${unavailableCount}</strong> Unavailable Models</span>
+        </div>
+        <div class="legend-item text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors" onclick="filterModelsByStatus('all')" title="Click to show all models">
+          Total: <strong>${currentModels.length}</strong> models
+        </div>
+      </div>
+    `;
+
 container.innerHTML += table;
 container.innerHTML += `
   <div class="flex gap-2 mt-4">
