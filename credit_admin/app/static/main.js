@@ -805,6 +805,7 @@ async function renderTransactionLogsView() {
           <th class="px-3 py-1.5">User</th>
           <th class="px-3 py-1.5">Amount</th>
           <th class="px-3 py-1.5">Type</th>
+          <th class="px-3 py-1.5">Model</th>
           <th class="px-3 py-1.5">Actor</th>
           <th class="px-3 py-1.5">Balance After</th>
           <th class="px-3 py-1.5">Reason</th>
@@ -825,12 +826,21 @@ async function renderTransactionLogsView() {
         ? `<span class="user-display" title="User ID: ${transaction.user_id}">${transaction.user_name}</span>`
         : `<span class="font-mono">${transaction.user_id}</span>`;
       
+      // Display model information with token details if available
+      let modelInfo = transaction.model_id || '';
+      if (transaction.model_id && (transaction.prompt_tokens || transaction.completion_tokens)) {
+        const promptTokens = transaction.prompt_tokens || 0;
+        const completionTokens = transaction.completion_tokens || 0;
+        modelInfo = `<span title="Prompt: ${promptTokens} tokens, Completion: ${completionTokens} tokens">${transaction.model_id}</span>`;
+      }
+      
       table += `
         <tr class="bg-white dark:bg-gray-900 border-t">
           <td class="px-3 py-1 text-xs">${timestamp}</td>
           <td class="px-3 py-1 text-xs">${userDisplay}</td>
           <td class="px-3 py-1 text-xs ${amountClass}">${transaction.amount > 0 ? '+' : ''}${transaction.amount}</td>
           <td class="px-3 py-1 text-xs"><span class="${typeClass}">${transaction.transaction_type}</span></td>
+          <td class="px-3 py-1 text-xs">${modelInfo}</td>
           <td class="px-3 py-1 text-xs">${transaction.actor}</td>
           <td class="px-3 py-1 text-xs">${transaction.balance_after}</td>
           <td class="px-3 py-1 text-xs">${transaction.reason || ''}</td>
