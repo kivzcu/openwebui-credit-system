@@ -165,14 +165,103 @@ function filterUsers(query) {
     const text = row.innerText.toLowerCase();
     row.style.display = text.includes(lower) ? "" : "none";
   });
+  
+  // Show/hide clear button based on whether there's search text
+  const clearButton = document.getElementById('clearUserSearch');
+  if (clearButton) {
+    clearButton.style.display = query.length > 0 ? 'block' : 'none';
+  }
 }
 
 function filterModels(query) {
-  const lower = query.toLowerCase();
+  // Store the current search query globally so status filter can use it
+  window.currentModelSearchQuery = query.toLowerCase();
+  
+  // Apply combined filtering
+  applyModelFilters();
+  
+  // Show/hide clear button based on whether there's search text
+  const clearButton = document.getElementById('clearModelSearch');
+  if (clearButton) {
+    clearButton.style.display = query.length > 0 ? 'block' : 'none';
+  }
+}
+
+function applyModelFilters() {
+  const searchQuery = window.currentModelSearchQuery || '';
+  const statusFilter = document.getElementById('statusFilter')?.value || 'all';
+  
   const rows = document.querySelectorAll("#mainContent table tbody tr");
   rows.forEach(row => {
-    row.style.display = row.innerText.toLowerCase().includes(lower) ? "" : "none";
+    let shouldShow = true;
+    
+    // Apply text search filter
+    if (searchQuery && !row.innerText.toLowerCase().includes(searchQuery)) {
+      shouldShow = false;
+    }
+    
+    // Apply status filter
+    if (shouldShow && statusFilter !== 'all') {
+      const statusCell = row.querySelector('td:nth-child(2)');
+      if (statusCell) {
+        const isAvailable = statusCell.textContent.includes('Available') && !statusCell.textContent.includes('Unavailable');
+        
+        if (statusFilter === 'available' && !isAvailable) {
+          shouldShow = false;
+        } else if (statusFilter === 'unavailable' && isAvailable) {
+          shouldShow = false;
+        }
+      }
+    }
+    
+    row.style.display = shouldShow ? "" : "none";
   });
+}
+
+function clearModelSearch() {
+  const searchInput = document.getElementById('modelSearchInput');
+  const clearButton = document.getElementById('clearModelSearch');
+  
+  if (searchInput) {
+    searchInput.value = '';
+    window.currentModelSearchQuery = ''; // Clear the global search query
+    applyModelFilters(); // Apply combined filtering (will keep status filter but clear text filter)
+    searchInput.focus(); // Refocus the input
+  }
+  
+  if (clearButton) {
+    clearButton.style.display = 'none';
+  }
+}
+
+function clearUserSearch() {
+  const searchInput = document.getElementById('userSearchInput');
+  const clearButton = document.getElementById('clearUserSearch');
+  
+  if (searchInput) {
+    searchInput.value = '';
+    filterUsers(''); // Clear the filter
+    searchInput.focus(); // Refocus the input
+  }
+  
+  if (clearButton) {
+    clearButton.style.display = 'none';
+  }
+}
+
+function clearGroupSearch() {
+  const searchInput = document.getElementById('groupSearchInput');
+  const clearButton = document.getElementById('clearGroupSearch');
+  
+  if (searchInput) {
+    searchInput.value = '';
+    filterGroups(''); // Clear the filter
+    searchInput.focus(); // Refocus the input
+  }
+  
+  if (clearButton) {
+    clearButton.style.display = 'none';
+  }
 }
 
 
@@ -182,32 +271,24 @@ function filterGroups(query) {
   rows.forEach(row => {
     row.style.display = row.innerText.toLowerCase().includes(lower) ? "" : "none";
   });
+  
+  // Show/hide clear button based on whether there's search text
+  const clearButton = document.getElementById('clearGroupSearch');
+  if (clearButton) {
+    clearButton.style.display = query.length > 0 ? 'block' : 'none';
+  }
 }
 
 
 function filterModelsByStatus(status) {
-  const rows = document.querySelectorAll("#mainContent table tbody tr");
-  rows.forEach(row => {
-    const statusCell = row.querySelector('td:nth-child(2)');
-    if (!statusCell) return;
-    
-    const isAvailable = statusCell.textContent.includes('Available') && !statusCell.textContent.includes('Unavailable');
-    
-    let shouldShow = true;
-    if (status === 'available' && !isAvailable) {
-      shouldShow = false;
-    } else if (status === 'unavailable' && isAvailable) {
-      shouldShow = false;
-    }
-    
-    row.style.display = shouldShow ? "" : "none";
-  });
-  
   // Update the dropdown to match the filter
   const statusFilter = document.getElementById('statusFilter');
   if (statusFilter) {
     statusFilter.value = status;
   }
+  
+  // Apply combined filtering (respects both text search and status)
+  applyModelFilters();
   
   // Update legend highlighting
   updateLegendHighlight(status);
@@ -249,10 +330,16 @@ async function renderUsersView() {
         </svg>
       </div>
       <input 
+        id="userSearchInput"
         class="w-full text-sm bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
         placeholder="Search"
         oninput="filterUsers(this.value)"
       />
+      <button id="clearUserSearch" onclick="clearUserSearch()" class="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" style="display: none;" title="Clear search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
+          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
+        </svg>
+      </button>
     </div>
   </div>`;
 
@@ -469,8 +556,13 @@ async function renderGroupsView() {
           <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
         </svg>
       </div>
-      <input class="w-full text-sm bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
+      <input id="groupSearchInput" class="w-full text-sm bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
              placeholder="Search" oninput="filterGroups(this.value)">
+      <button id="clearGroupSearch" onclick="clearGroupSearch()" class="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" style="display: none;" title="Clear search">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
+          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
+        </svg>
+      </button>
     </div>
   </div>`;
 
@@ -585,8 +677,13 @@ async function renderModelsView() {
             <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
           </svg>
         </div>
-        <input class="w-full text-sm bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
+        <input id="modelSearchInput" class="w-full text-sm bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
                placeholder="Search models..." oninput="filterModels(this.value)">
+        <button id="clearModelSearch" onclick="clearModelSearch()" class="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" style="display: none;" title="Clear search">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
+            <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
+          </svg>
+        </button>
       </div>
     </div>
   </div>`;

@@ -81,7 +81,7 @@
 
         .search-input {
             width: 100%;
-            padding: 15px 20px 15px 50px;
+            padding: 15px 50px 15px 50px;
             border: 2px solid #e9ecef;
             border-radius: 50px;
             font-size: 16px;
@@ -102,6 +102,27 @@
             transform: translateY(-50%);
             color: #6c757d;
             font-size: 18px;
+        }
+
+        .clear-search-btn {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: #6c757d;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 5px;
+            border-radius: 50%;
+            transition: all 0.2s ease;
+            display: none;
+        }
+
+        .clear-search-btn:hover {
+            color: #495057;
+            background: rgba(0, 0, 0, 0.05);
         }
 
         .sort-controls {
@@ -349,6 +370,7 @@
                     <div class="search-box">
                         <div class="search-icon">🔍</div>
                         <input type="text" class="search-input" placeholder="Search models..." id="searchInput">
+                        <button class="clear-search-btn" id="clearSearchBtn" title="Clear search">✕</button>
                     </div>
                 </div>
                 
@@ -429,6 +451,7 @@
 
             initializeElements() {
                 this.searchInput = document.getElementById('searchInput');
+                this.clearSearchBtn = document.getElementById('clearSearchBtn');
                 this.multiplierToggle = document.getElementById('multiplierToggle');
                 this.modelsContainer = document.getElementById('modelsContainer');
                 this.loadingState = document.getElementById('loadingState');
@@ -442,7 +465,13 @@
                 // Search functionality
                 this.searchInput.addEventListener('input', (e) => {
                     this.searchTerm = e.target.value.toLowerCase();
+                    this.updateClearButtonVisibility();
                     this.filterAndRenderModels();
+                });
+
+                // Clear search functionality
+                this.clearSearchBtn.addEventListener('click', () => {
+                    this.clearSearch();
                 });
 
                 // Multiplier toggle functionality
@@ -492,6 +521,20 @@
                         </div>
                     `;
                 }
+            }
+
+            updateClearButtonVisibility() {
+                if (this.clearSearchBtn) {
+                    this.clearSearchBtn.style.display = this.searchTerm.length > 0 ? 'block' : 'none';
+                }
+            }
+
+            clearSearch() {
+                this.searchInput.value = '';
+                this.searchTerm = '';
+                this.updateClearButtonVisibility();
+                this.filterAndRenderModels();
+                this.searchInput.focus();
             }
 
             filterAndRenderModels() {
