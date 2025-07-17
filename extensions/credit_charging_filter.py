@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 import httpx
 import tiktoken
 import re
+from functools import partial
 
 
 # Support both HTTP and HTTPS based on environment
@@ -24,9 +25,9 @@ API_KEY = os.getenv("CREDITS_API_KEY", "vY97Yvh6qKywm8xE-ErTGfUofV0t1BiZ36wR3lLN
 
 
 class Filter:
-    def _count_tokens_o200k(self, text: str) -> int:
-        """Counts tokens using o200k_base encoding."""
-        encoding = tiktoken.get_encoding("o200k_base")
+    def _count_tokens_tiktoken(self, text: str, encoding_name: str) -> int:
+        """Counts tokens using a specified tiktoken encoding."""
+        encoding = tiktoken.get_encoding(encoding_name)
         return len(encoding.encode(text))
 
     def _count_tokens_anthropic_dummy(self, text: str) -> int:
@@ -37,12 +38,6 @@ class Filter:
         # Dummy implementation: count words
         return len(text.split())
 
-    # Map of model name patterns to their respective token counting functions.
-    COUNT_FUNCTIONS = {
-        r"^(gpt-4\.1-|4o-mini)": _count_tokens_o200k,
-        r"^(claude-.*)": _count_tokens_anthropic_dummy,
-    }
-
     class Valves(BaseModel):
         show_status: bool = Field(
             default=True, description="Zobrazit info o stržení kreditů"
@@ -51,6 +46,13 @@ class Filter:
     def __init__(self):
         self.valves = self.Valves()
         self.estimation_warning = ""
+        # Map of model name patterns to their respective token counting functions.
+        self.COUNT_FUNCTIONS = {
+            r"^(gpt-4\.1|4o-mini|o4)": partial(
+                self._count_tokens_tiktoken, encoding_name="o200k_base"
+            ),
+            r"^(claude-.*)": self._count_tokens_anthropic_dummy,
+        }
 
     def get_token_count(self, text: str, model_name: str) -> int:
         """
@@ -59,14 +61,14 @@ class Filter:
         # Check for a matching counting function for special cases
         for pattern, func in self.COUNT_FUNCTIONS.items():
             if re.match(pattern, model_name):
-                return func(self, text)
+                return func(text)
 
         # If no special mapping, try getting encoding from model name
         try:
             encoding = tiktoken.encoding_for_model(model_name)
             return len(encoding.encode(text))
         except KeyError:
-            self.estimation_warning = f"⚠️ The cost is an estimate.\n"
+            self.estimation_warning = f"⚠️ The cost is an estimate."
             encoding = tiktoken.get_encoding("cl100k_base")
             return len(encoding.encode(text))
 
@@ -105,26 +107,39 @@ class Filter:
 
         # The last message is the completion, the rest are the prompt
         completion_message = messages[-1]
-        prompt_messages = messages[:-1]
 
-        prompt_tokens = sum(
-            self.count_tokens(msg, model_name) for msg in prompt_messages
-        )
-        completion_tokens = self.count_tokens(completion_message, model_name)
+        usage = completion_message.get("usage")
+        if usage and "prompt_tokens" in usage and "completion_tokens" in usage:
+            prompt_tokens = usage["prompt_tokens"]
+            completion_tokens = usage["completion_tokens"]
+            self.estimation_warning = ""  # Exact cost, no warning
+            actor = "model-usage"
+            # Print cached tokens to stdout
+            cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+            print(f"Cached tokens: {cached_tokens}")
+        else:
+            # Fallback to manual counting if usage is not available
+            prompt_messages = messages[:-1]
+            prompt_tokens = sum(
+                self.count_tokens(msg, model_name) for msg in prompt_messages
+            )
+            completion_tokens = self.count_tokens(completion_message, model_name)
+            if self.estimation_warning:
+                actor = "estimate-count"
+            else:
+                actor = "manual-count"
 
         try:
             # Set up headers with API key
             headers = {"X-API-Key": API_KEY} if API_KEY else {}
-            
+
             async with httpx.AsyncClient(verify=SSL_VERIFY) as client:
                 # Use optimized endpoints - get only the specific user and model we need
                 user_res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/user/{user_id}",
-                    headers=headers
+                    f"{CREDITS_API_BASE_URL}/user/{user_id}", headers=headers
                 )
                 model_res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/model/{model_name}",
-                    headers=headers
+                    f"{CREDITS_API_BASE_URL}/model/{model_name}", headers=headers
                 )
                 user_res.raise_for_status()
                 model_res.raise_for_status()
@@ -165,7 +180,7 @@ class Filter:
         try:
             # Set up headers with API key
             headers = {"X-API-Key": API_KEY} if API_KEY else {}
-            
+
             async with httpx.AsyncClient(verify=SSL_VERIFY) as client:
                 # Use the new optimized deduction endpoint
                 deduction_res = await client.post(
@@ -175,9 +190,9 @@ class Filter:
                         "model_id": model_name,
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
-                        "actor": "auto-system",
+                        "actor": actor,
                     },
-                    headers=headers
+                    headers=headers,
                 )
                 deduction_res.raise_for_status()
                 result = deduction_res.json()
@@ -206,7 +221,7 @@ class Filter:
             else:
                 # Normal scenario - full payment
                 description = f"💳 Charged {actual_cost:.3f} credits – New balance: {new_balance:.3f}"
-            
+
             if self.estimation_warning:
                 description = self.estimation_warning + "<br/>" + description
 
@@ -221,4 +236,3 @@ class Filter:
             )
 
         return body
-

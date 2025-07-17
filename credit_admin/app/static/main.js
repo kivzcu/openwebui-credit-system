@@ -6,6 +6,8 @@ let currentUser = null;
 document.addEventListener('DOMContentLoaded', () => {
   if (authToken) {
     verifyToken();
+    // Set up periodic token verification (every 5 minutes)
+    // setInterval(verifyTokenSilently, 5 * 60 * 1000);
   } else {
     showLoginForm();
   }
@@ -120,17 +122,69 @@ async function authenticatedFetch(url, options = {}) {
     ...options.headers
   };
   
-  const response = await fetch(url, {
-    ...options,
-    headers
-  });
-  
-  if (response.status === 401) {
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers
+    });
+    
+    if (response.status === 401) {
+      // Token is invalid or expired
+      logout();
+      throw new AuthenticationError('Authentication expired. Please log in again.');
+    }
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    return response;
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      // Re-throw authentication errors so they can be handled specially
+      throw error;
+    }
+    // For network errors or other issues, also check if it might be auth-related
+    if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
+      // Could be a network issue, but let's verify the token is still valid
+      await verifyTokenSilently();
+    }
+    throw error;
+  }
+}
+
+// Custom error class for authentication issues
+class AuthenticationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'AuthenticationError';
+  }
+}
+
+// Silent token verification (doesn't show login form on success)
+async function verifyTokenSilently() {
+  if (!authToken) {
     logout();
-    throw new Error('Authentication expired');
+    return false;
   }
   
-  return response;
+  try {
+    const response = await fetch('/auth/me', {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    
+    if (!response.ok) {
+      logout();
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    logout();
+    return false;
+  }
 }
 
 function selectView(view) {
@@ -394,6 +448,10 @@ container.innerHTML += `
 
     container.innerHTML += `<div id="modalRoot"></div>`;
   } catch (err) {
+    if (err instanceof AuthenticationError) {
+      // Authentication error - user will already be redirected to login
+      return;
+    }
     container.innerHTML += `<p class="text-red-500">Error loading users: ${err.message}</p>`;
   }
 }
@@ -502,6 +560,10 @@ async function syncUsersFromOpenWebUI() {
       alert(`Sync failed: ${result.message}`);
     }
   } catch (error) {
+    if (error instanceof AuthenticationError) {
+      // Authentication error - user will already be redirected to login
+      return;
+    }
     alert(`Sync failed: ${error.message}`);
   } finally {
     // Restore button state
@@ -537,6 +599,10 @@ async function syncModelsFromOpenWebUI() {
       alert(`Model sync failed: ${result.message}`);
     }
   } catch (error) {
+    if (error instanceof AuthenticationError) {
+      // Authentication error - user will already be redirected to login
+      return;
+    }
     alert(`Model sync failed: ${error.message}`);
   } finally {
     // Restore button state
@@ -605,6 +671,10 @@ container.innerHTML += `
 
 
   } catch (err) {
+    if (err instanceof AuthenticationError) {
+      // Authentication error - user will already be redirected to login
+      return;
+    }
     container.innerHTML += `<p class="text-red-500">Error loading groups: ${err.message}</p>`;
   }
 }
@@ -770,6 +840,10 @@ container.innerHTML += `
 
 
   } catch (err) {
+    if (err instanceof AuthenticationError) {
+      // Authentication error - user will already be redirected to login
+      return;
+    }
     container.innerHTML += `<p class="text-red-500">Error loading models: ${err.message}</p>`;
   }
 }
@@ -822,9 +896,26 @@ async function saveModelPricing(modelId) {
   }
 }
 
+// Reusable SVG for refresh icon
+function getRefreshIconSVG() {
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
+      <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
+    </svg>
+  `;
+}
+
 async function renderSystemLogsView() {
   const container = document.getElementById('mainContent');
-  container.innerHTML = '<h2 class="text-2xl font-bold mb-4">System Logs</h2>';
+  container.innerHTML = `
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-2xl font-bold">System Logs</h2>
+      <button onclick="renderSystemLogsView()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors flex items-center gap-2" title="Refresh logs">
+        ${getRefreshIconSVG()}
+        Refresh
+      </button>
+    </div>
+  `;
 
   try {
     const res = await authenticatedFetch('/api/credits/system-logs');
@@ -856,13 +947,25 @@ async function renderSystemLogsView() {
     table += '</tbody></table>';
     container.innerHTML += table;
   } catch (err) {
+    if (err instanceof AuthenticationError) {
+      // Authentication error - user will already be redirected to login
+      return;
+    }
     container.innerHTML += `<p class="text-red-500">Error loading system logs: ${err.message}</p>`;
   }
 }
 
 async function renderTransactionLogsView() {
   const container = document.getElementById('mainContent');
-  container.innerHTML = '<h2 class="text-2xl font-bold mb-4">Transaction Logs</h2>';
+  container.innerHTML = `
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-2xl font-bold">Transaction Logs</h2>
+      <button onclick="renderTransactionLogsView()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors flex items-center gap-2" title="Refresh logs">
+        ${getRefreshIconSVG()}
+        Refresh
+      </button>
+    </div>
+  `;
 
   try {
     const res = await authenticatedFetch('/api/credits/transactions');
@@ -947,6 +1050,10 @@ async function renderTransactionLogsView() {
     table += '</tbody></table>';
     container.innerHTML += table;
   } catch (err) {
+    if (err instanceof AuthenticationError) {
+      // Authentication error - user will already be redirected to login
+      return;
+    }
     container.innerHTML += `<p class="text-red-500">Error loading transaction logs: ${err.message}</p>`;
   }
 }
