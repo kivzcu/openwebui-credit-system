@@ -42,7 +42,8 @@ class CreditDeductionRequest(BaseModel):
     actor: str = "auto-system"
 
 class SettingsUpdateRequest(BaseModel):
-    usd_to_credit_ratio: float
+    usd_to_credit_ratio: Optional[float] = None
+    token_multiplier: Optional[int] = None
     actor: str = "admin"
 
 # User-specific endpoints (optimized for extensions)
@@ -338,23 +339,38 @@ async def get_public_model_pricing():
 async def get_settings(current_user: User = Depends(get_current_admin_user)):
     """Get system settings - Admin only"""
     return {
-        "usd_to_credit_ratio": db.get_usd_to_credit_ratio()
+        "usd_to_credit_ratio": db.get_usd_to_credit_ratio(),
+        "token_multiplier": db.get_token_multiplier()
     }
 
 @router.post("/api/credits/settings", tags=["settings"])
 async def update_settings(request: SettingsUpdateRequest, current_user: User = Depends(get_current_admin_user)):
     """Update system settings - Admin only"""
-    success = db.set_usd_to_credit_ratio(request.usd_to_credit_ratio)
+    updated_fields = []
     
-    if success:
-        db.log_action("settings_update", request.actor, 
-                     f"Updated USD to credit ratio to {request.usd_to_credit_ratio}")
+    if request.usd_to_credit_ratio is not None:
+        success = db.set_usd_to_credit_ratio(request.usd_to_credit_ratio)
+        if success:
+            updated_fields.append(f"USD to credit ratio: {request.usd_to_credit_ratio}")
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update USD to credit ratio")
+    
+    if request.token_multiplier is not None:
+        success = db.set_token_multiplier(request.token_multiplier)
+        if success:
+            updated_fields.append(f"Token multiplier: {request.token_multiplier}")
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update token multiplier")
+    
+    if updated_fields:
         return {
             "status": "success",
-            "usd_to_credit_ratio": request.usd_to_credit_ratio
+            "message": f"Updated: {', '.join(updated_fields)}",
+            "usd_to_credit_ratio": db.get_usd_to_credit_ratio(),
+            "token_multiplier": db.get_token_multiplier()
         }
     else:
-        raise HTTPException(status_code=500, detail="Failed to update settings")
+        raise HTTPException(status_code=400, detail="No valid settings provided")
 
 # Sync functions
 async def sync_user_from_openwebui(user_id: str):

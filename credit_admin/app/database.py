@@ -120,6 +120,12 @@ class CreditDatabase:
                 VALUES ('usd_to_credit_ratio', '1000.0')
             """)
             
+            # Initialize default token multiplier (1K tokens)
+            cursor.execute("""
+                INSERT OR IGNORE INTO credit_settings (key, value) 
+                VALUES ('token_multiplier', '1000')
+            """)
+            
             # Indexes for better performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_users_group ON credit_users(group_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON credit_transactions(user_id)")
@@ -385,6 +391,14 @@ class CreditDatabase:
                 LIMIT ?
             """, (limit,))
             return [dict(row) for row in cursor.fetchall()]
+    
+    def delete_log_entry(self, log_id: int) -> bool:
+        """Delete a specific log entry by ID"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM credit_logs WHERE id = ?", (log_id,))
+            conn.commit()
+            return cursor.rowcount > 0
 
     def get_user_name_from_openwebui(self, user_id: str) -> Optional[str]:
         """Get user name from OpenWebUI database"""
@@ -484,6 +498,18 @@ class CreditDatabase:
         """Convert USD to credits"""
         ratio = self.get_usd_to_credit_ratio()
         return usd * ratio
+
+    def get_token_multiplier(self) -> int:
+        """Get the current token multiplier setting"""
+        multiplier_str = self.get_setting('token_multiplier', '1000')
+        try:
+            return int(multiplier_str) if multiplier_str else 1000
+        except (ValueError, TypeError):
+            return 1000  # Default fallback
+
+    def set_token_multiplier(self, multiplier: int) -> bool:
+        """Set the token multiplier setting"""
+        return self.set_setting('token_multiplier', str(multiplier))
 
 # Global database instance
 db = CreditDatabase()

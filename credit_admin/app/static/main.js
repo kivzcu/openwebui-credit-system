@@ -2,8 +2,147 @@
 let authToken = localStorage.getItem('authToken');
 let currentUser = null;
 
+// Notification system
+class NotificationManager {
+  constructor() {
+    this.container = null;
+    this.notifications = new Map();
+    this.nextId = 1;
+  }
+
+  init() {
+    this.container = document.getElementById('notificationContainer');
+  }
+
+  show(message, type = 'info', duration = 0) {
+    const id = this.nextId++;
+    const notification = this.createElement(id, message, type);
+    
+    this.container.appendChild(notification);
+    this.notifications.set(id, { element: notification, type, message });
+    
+    // Show clear all button when notifications exist
+    this.updateClearAllButton();
+
+    // Auto-remove after duration (0 means persistent)
+    if (duration > 0) {
+      setTimeout(() => this.remove(id), duration);
+    }
+
+    return id;
+  }
+
+  createElement(id, message, type) {
+    const div = document.createElement('div');
+    div.className = `notification p-4 rounded-md shadow-lg border ${this.getTypeClasses(type)}`;
+    div.setAttribute('data-notification-id', id);
+    
+    div.innerHTML = `
+      <div class="flex items-start justify-between">
+        <div class="flex-1">
+          <div class="flex items-center">
+            ${this.getTypeIcon(type)}
+            <span class="ml-2 text-sm font-medium">${this.getTypeTitle(type)}</span>
+          </div>
+          <p class="mt-1 text-sm">${message}</p>
+        </div>
+        <div class="ml-4 flex space-x-1">
+          <button onclick="notifications.remove(${id})" 
+                  class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    `;
+
+    return div;
+  }
+
+  getTypeClasses(type) {
+    const classes = {
+      success: 'bg-green-50/80 border-green-200 text-green-800 dark:bg-green-900/80 dark:border-green-700 dark:text-green-200',
+      error: 'bg-red-50/80 border-red-200 text-red-800 dark:bg-red-900/80 dark:border-red-700 dark:text-red-200',
+      warning: 'bg-yellow-50/80 border-yellow-200 text-yellow-800 dark:bg-yellow-900/80 dark:border-yellow-700 dark:text-yellow-200',
+      info: 'bg-blue-50/80 border-blue-200 text-blue-800 dark:bg-blue-900/80 dark:border-blue-700 dark:text-blue-200'
+    };
+    return classes[type] || classes.info;
+  }
+
+  getTypeIcon(type) {
+    const icons = {
+      success: '<svg class="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>',
+      error: '<svg class="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>',
+      warning: '<svg class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>',
+      info: '<svg class="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>'
+    };
+    return icons[type] || icons.info;
+  }
+
+  getTypeTitle(type) {
+    const titles = {
+      success: 'Success',
+      error: 'Error',
+      warning: 'Warning',
+      info: 'Info'
+    };
+    return titles[type] || 'Info';
+  }
+
+  remove(id) {
+    const notification = this.notifications.get(id);
+    if (notification) {
+      notification.element.classList.add('removing');
+      setTimeout(() => {
+        if (notification.element.parentNode) {
+          notification.element.parentNode.removeChild(notification.element);
+        }
+        this.notifications.delete(id);
+        this.updateClearAllButton();
+      }, 300);
+    }
+  }
+
+  clearAll() {
+    this.notifications.forEach((_, id) => this.remove(id));
+  }
+
+  updateClearAllButton() {
+    const clearAllContainer = document.getElementById('clearAllContainer');
+    if (clearAllContainer) {
+      if (this.notifications.size > 0) {
+        clearAllContainer.classList.remove('hidden');
+      } else {
+        clearAllContainer.classList.add('hidden');
+      }
+    }
+  }
+
+  success(message, duration = 0) {
+    return this.show(message, 'success', duration);
+  }
+
+  error(message, duration = 0) {
+    return this.show(message, 'error', duration);
+  }
+
+  warning(message, duration = 0) {
+    return this.show(message, 'warning', duration);
+  }
+
+  info(message, duration = 0) {
+    return this.show(message, 'info', duration);
+  }
+}
+
+// Global notification instance
+const notifications = new NotificationManager();
+
 // Check authentication on page load
 document.addEventListener('DOMContentLoaded', () => {
+  notifications.init(); // Initialize notification system
+  
   if (authToken) {
     verifyToken();
     // Set up periodic token verification (every 5 minutes)
@@ -59,10 +198,10 @@ document.getElementById('loginFormElement').addEventListener('submit', async (e)
       showAdminInterface();
     } else {
       const error = await response.json();
-      showError(error.detail || 'Login failed');
+      notifications.error(error.detail || 'Login failed');
     }
   } catch (error) {
-    showError('Network error. Please try again.');
+    notifications.error('Network error. Please try again.');
   }
 });
 
@@ -490,7 +629,7 @@ function editUser(userId) {
 }
 function exportUsersToExcel() {
   if (!currentUsers.length) {
-    alert("No user data available for export.");
+    notifications.warning("No user data available for export.");
     return;
   }
   const worksheet = XLSX.utils.json_to_sheet(currentUsers);
@@ -501,7 +640,7 @@ function exportUsersToExcel() {
 
 function exportGroupsToExcel() {
   if (!currentGroups.length) {
-    alert("No group data available for export.");
+    notifications.warning("No group data available for export.");
     return;
   }
   const worksheet = XLSX.utils.json_to_sheet(currentGroups);
@@ -512,7 +651,7 @@ function exportGroupsToExcel() {
 
 function exportModelsToExcel() {
   if (!currentModels.length) {
-    alert("No model data available for export.");
+    notifications.warning("No model data available for export.");
     return;
   }
   const worksheet = XLSX.utils.json_to_sheet(currentModels);
@@ -533,11 +672,11 @@ async function saveUserCredits(userId) {
 
   const result = await res.json();
   if (result.status === 'success') {
-    alert(`Credits successfully updated to ${newCredits}`);
+    notifications.success(`Credits successfully updated to ${newCredits}`);
     document.querySelector('.fixed').remove();
     renderUsersView();
   } else {
-    alert('Error saving credits');
+    notifications.error('Error saving credits');
   }
 }
 
@@ -562,17 +701,17 @@ async function syncUsersFromOpenWebUI() {
     
     const result = await res.json();
     if (result.status === 'success') {
-      alert('Users synced successfully from OpenWebUI!');
+      notifications.success('Users synced successfully from OpenWebUI!');
       renderUsersView(); // Refresh the user list
     } else {
-      alert(`Sync failed: ${result.message}`);
+      notifications.error(`Sync failed: ${result.message}`);
     }
   } catch (error) {
     if (error instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    alert(`Sync failed: ${error.message}`);
+    notifications.error(`Sync failed: ${error.message}`);
   } finally {
     // Restore button state
     button.innerHTML = originalText;
@@ -601,17 +740,17 @@ async function syncModelsFromOpenWebUI() {
     
     const result = await res.json();
     if (result.status === 'success') {
-      alert('Models synced successfully from OpenWebUI!');
+      notifications.success('Models synced successfully from OpenWebUI!');
       renderModelsView(); // Refresh the models list
     } else {
-      alert(`Model sync failed: ${result.message}`);
+      notifications.error(`Model sync failed: ${result.message}`);
     }
   } catch (error) {
     if (error instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    alert(`Model sync failed: ${error.message}`);
+    notifications.error(`Model sync failed: ${error.message}`);
   } finally {
     // Restore button state
     button.innerHTML = originalText;
@@ -727,11 +866,11 @@ async function saveGroupCredits(groupId) {
 
   const result = await res.json();
   if (result.status === 'success') {
-    alert(`Group credits successfully set to ${newCredits}`);
+    notifications.success(`Group credits successfully set to ${newCredits}`);
     document.querySelector('.fixed').remove();
     renderGroupsView();
   } else {
-    alert('Error saving group credits');
+    notifications.error('Error saving group credits');
   }
 }
 
@@ -768,16 +907,33 @@ async function renderModelsView() {
 
 
   try {
-    const res = await authenticatedFetch('/api/credits/models');
-    currentModels = await res.json();
+    // Fetch both models and settings to get the token multiplier
+    const [modelsRes, settingsRes] = await Promise.all([
+      authenticatedFetch('/api/credits/models'),
+      authenticatedFetch('/api/credits/settings')
+    ]);
+    
+    currentModels = await modelsRes.json();
+    const settings = await settingsRes.json();
+    const tokenMultiplier = settings.token_multiplier || 1000; // Default to 1K tokens
+    
+    // Helper function to get display unit text
+    const getDisplayUnit = (multiplier) => {
+      if (multiplier === 1) return '1 token';
+      if (multiplier === 1000) return '1K tokens';
+      if (multiplier === 1000000) return '1M tokens';
+      return `${multiplier} tokens`;
+    };
+    
+    const displayUnit = getDisplayUnit(tokenMultiplier);
 
     let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
       <thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850">
         <tr>
           <th class="px-3 py-1.5">Model</th>
           <th class="px-3 py-1.5">Status</th>
-          <th class="px-3 py-1.5">Context Price</th>
-          <th class="px-3 py-1.5">Generation Price</th>
+          <th class="px-3 py-1.5">Context Price (per ${displayUnit})</th>
+          <th class="px-3 py-1.5">Generation Price (per ${displayUnit})</th>
           <th class="px-3 py-1.5 text-right">Actions</th>
         </tr>
       </thead>
@@ -793,6 +949,12 @@ async function renderModelsView() {
       
       const nameClass = '';
       const priceClass = '';
+      
+      // Apply token multiplier to display prices
+      const displayContextPrice = (model.context_price * tokenMultiplier).toFixed(6);
+      const displayGenerationPrice = (model.generation_price * tokenMultiplier).toFixed(6);
+      const displayContextPriceUsd = model.context_price_usd ? (model.context_price_usd * tokenMultiplier).toFixed(6) : 'N/A';
+      const displayGenerationPriceUsd = model.generation_price_usd ? (model.generation_price_usd * tokenMultiplier).toFixed(6) : 'N/A';
         
       table += `
         <tr class="${rowClass}">
@@ -800,14 +962,14 @@ async function renderModelsView() {
           <td class="px-3 py-1">${statusBadge}</td>
           <td class="px-3 py-1 ${priceClass}">
             <div class="text-xs">
-              <div><strong>${model.context_price}</strong> credits</div>
-              <div class="text-gray-500">$${model.context_price_usd ? model.context_price_usd.toFixed(6) : 'N/A'}</div>
+              <div><strong>${displayContextPrice}</strong> credits</div>
+              <div class="text-gray-500">$${displayContextPriceUsd}</div>
             </div>
           </td>
           <td class="px-3 py-1 ${priceClass}">
             <div class="text-xs">
-              <div><strong>${model.generation_price}</strong> credits</div>
-              <div class="text-gray-500">$${model.generation_price_usd ? model.generation_price_usd.toFixed(6) : 'N/A'}</div>
+              <div><strong>${displayGenerationPrice}</strong> credits</div>
+              <div class="text-gray-500">$${displayGenerationPriceUsd}</div>
             </div>
           </td>
           <td class="px-3 py-1 text-right">
@@ -870,16 +1032,32 @@ async function editModel(modelId) {
   const model = currentModels.find(m => m.id === modelId);
   if (!model) return;
 
-  // Fetch current settings for conversion ratio
+  // Fetch current settings for conversion ratio and token multiplier
   let usdToCreditRatio = 1000.0; // Default fallback
+  let tokenMultiplier = 1000; // Default fallback
   try {
     const settingsRes = await authenticatedFetch('/api/credits/settings');
     const settings = await settingsRes.json();
     usdToCreditRatio = settings.usd_to_credit_ratio || 1000.0;
+    tokenMultiplier = settings.token_multiplier || 1000;
   } catch (err) {
-    console.warn('Could not fetch settings, using default conversion ratio:', err);
+    console.warn('Could not fetch settings, using default values:', err);
   }
-
+  
+  // Helper function to get display unit text
+  const getDisplayUnit = (multiplier) => {
+    if (multiplier === 1) return '1 token';
+    if (multiplier === 1000) return '1K tokens';
+    if (multiplier === 1000000) return '1M tokens';
+    return `${multiplier} tokens`;
+  };
+  
+  const displayUnit = getDisplayUnit(tokenMultiplier);
+  
+  // Apply token multiplier to display values (prices are stored per 1 token in DB)
+  const displayContextPrice = (model.context_price * tokenMultiplier).toFixed(6);
+  const displayGenerationPrice = (model.generation_price * tokenMultiplier).toFixed(6);
+  
   const modal = document.createElement('div');
   modal.className = 'fixed inset-0 bg-black/30 flex items-center justify-center z-50';
   modal.innerHTML = `
@@ -901,22 +1079,22 @@ async function editModel(modelId) {
       
       <div class="space-y-3">
         <div>
-          <label class="block text-sm">Context Token Price <span id="contextUnit">(credits)</span></label>
-          <input type="number" id="contextPriceInput" value="${model.context_price}" step="0.000001" 
+          <label class="block text-sm">Context Token Price <span id="contextUnit">(credits per ${displayUnit})</span></label>
+          <input type="number" id="contextPriceInput" value="${displayContextPrice}" step="any" 
                  oninput="updateConversion()" 
                  class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
           <div id="contextConversion" class="text-xs text-gray-500 mt-1">
-            ≈ $${model.context_price_usd ? model.context_price_usd.toFixed(6) : 'N/A'} USD
+            ≈ $${model.context_price_usd ? (model.context_price_usd * tokenMultiplier).toFixed(6) : 'N/A'} USD per ${displayUnit}
           </div>
         </div>
         
         <div>
-          <label class="block text-sm">Generation Token Price <span id="generationUnit">(credits)</span></label>
-          <input type="number" id="generationPriceInput" value="${model.generation_price}" step="0.000001" 
+          <label class="block text-sm">Generation Token Price <span id="generationUnit">(credits per ${displayUnit})</span></label>
+          <input type="number" id="generationPriceInput" value="${displayGenerationPrice}" step="any" 
                  oninput="updateConversion()" 
                  class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
           <div id="generationConversion" class="text-xs text-gray-500 mt-1">
-            ≈ $${model.generation_price_usd ? model.generation_price_usd.toFixed(6) : 'N/A'} USD
+            ≈ $${model.generation_price_usd ? (model.generation_price_usd * tokenMultiplier).toFixed(6) : 'N/A'} USD per ${displayUnit}
           </div>
         </div>
       </div>
@@ -929,10 +1107,14 @@ async function editModel(modelId) {
 
   document.getElementById('modalRoot').appendChild(modal);
   
-  // Store the current pricing mode, model data, and conversion ratio
+  // Store the current pricing mode, model data, conversion ratio, token multiplier, and original credit values
   window.currentPricingMode = 'credits';
   window.currentModelData = model;
   window.usdToCreditRatio = usdToCreditRatio;
+  window.tokenMultiplier = tokenMultiplier;
+  // Always store the original credit values (per 1 token from DB) for accurate conversion
+  window.originalContextCredits = model.context_price;
+  window.originalGenerationCredits = model.generation_price;
 }
 
 function updateConversion() {
@@ -941,27 +1123,41 @@ function updateConversion() {
   const contextConversion = document.getElementById('contextConversion');
   const generationConversion = document.getElementById('generationConversion');
   
-  if (!contextInput || !generationInput || !window.usdToCreditRatio) return;
+  if (!contextInput || !generationInput || !window.usdToCreditRatio || !window.tokenMultiplier) return;
   
   const contextValue = parseFloat(contextInput.value) || 0;
   const generationValue = parseFloat(generationInput.value) || 0;
   const ratio = window.usdToCreditRatio;
+  const tokenMultiplier = window.tokenMultiplier;
+  
+  // Helper function to get display unit text
+  const getDisplayUnit = (multiplier) => {
+    if (multiplier === 1) return '1 token';
+    if (multiplier === 1000) return '1K tokens';
+    if (multiplier === 1000000) return '1M tokens';
+    return `${multiplier} tokens`;
+  };
+  
+  const displayUnit = getDisplayUnit(tokenMultiplier);
   
   if (window.currentPricingMode === 'usd') {
-    // Converting USD to credits for display
-    contextConversion.textContent = `≈ ${(contextValue * ratio).toFixed(3)} credits`;
-    generationConversion.textContent = `≈ ${(generationValue * ratio).toFixed(3)} credits`;
+    // Converting USD (per displayUnit) to credits (per displayUnit) for display
+    contextConversion.textContent = `≈ ${(contextValue * ratio).toFixed(6)} credits per ${displayUnit}`;
+    generationConversion.textContent = `≈ ${(generationValue * ratio).toFixed(6)} credits per ${displayUnit}`;
   } else {
-    // Converting credits to USD for display
-    contextConversion.textContent = `≈ $${(contextValue / ratio).toFixed(6)} USD`;
-    generationConversion.textContent = `≈ $${(generationValue / ratio).toFixed(6)} USD`;
+    // Converting credits (per displayUnit) to USD (per displayUnit) for display
+    contextConversion.textContent = `≈ $${(contextValue / ratio).toFixed(6)} USD per ${displayUnit}`;
+    generationConversion.textContent = `≈ $${(generationValue / ratio).toFixed(6)} USD per ${displayUnit}`;
   }
 }
 
 function switchPricingMode(mode) {
-  const model = window.currentModelData;
   const ratio = window.usdToCreditRatio;
-  if (!model || !ratio) return;
+  const tokenMultiplier = window.tokenMultiplier;
+  const originalContextCredits = window.originalContextCredits;
+  const originalGenerationCredits = window.originalGenerationCredits;
+  
+  if (!ratio || !tokenMultiplier || originalContextCredits === undefined || originalGenerationCredits === undefined) return;
   
   const contextInput = document.getElementById('contextPriceInput');
   const generationInput = document.getElementById('generationPriceInput');
@@ -970,29 +1166,33 @@ function switchPricingMode(mode) {
   const creditBtn = document.getElementById('creditModeBtn');
   const usdBtn = document.getElementById('usdModeBtn');
   
+  // Helper function to get display unit text
+  const getDisplayUnit = (multiplier) => {
+    if (multiplier === 1) return '1 token';
+    if (multiplier === 1000) return '1K tokens';
+    if (multiplier === 1000000) return '1M tokens';
+    return `${multiplier} tokens`;
+  };
+  
+  const displayUnit = getDisplayUnit(tokenMultiplier);
+  
   if (mode === 'usd') {
-    // Switch to USD mode - convert current credit values to USD
-    const currentContextCredits = parseFloat(contextInput.value) || model.context_price;
-    const currentGenerationCredits = parseFloat(generationInput.value) || model.generation_price;
-    
-    contextInput.value = (currentContextCredits / ratio).toFixed(6);
-    generationInput.value = (currentGenerationCredits / ratio).toFixed(6);
-    contextUnit.textContent = '(USD per token)';
-    generationUnit.textContent = '(USD per token)';
+    // Switch to USD mode - convert original credit values to USD and apply token multiplier for display
+    contextInput.value = ((originalContextCredits / ratio) * tokenMultiplier).toFixed(7);
+    generationInput.value = ((originalGenerationCredits / ratio) * tokenMultiplier).toFixed(7);
+    contextUnit.textContent = `(USD per ${displayUnit})`;
+    generationUnit.textContent = `(USD per ${displayUnit})`;
     
     creditBtn.className = 'flex-1 px-3 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200';
     usdBtn.className = 'flex-1 px-3 py-2 text-sm bg-blue-600 text-white';
     
     window.currentPricingMode = 'usd';
   } else {
-    // Switch to credits mode - convert current USD values to credits
-    const currentContextUsd = parseFloat(contextInput.value) || (model.context_price / ratio);
-    const currentGenerationUsd = parseFloat(generationInput.value) || (model.generation_price / ratio);
-    
-    contextInput.value = (currentContextUsd * ratio).toFixed(3);
-    generationInput.value = (currentGenerationUsd * ratio).toFixed(3);
-    contextUnit.textContent = '(credits)';
-    generationUnit.textContent = '(credits)';
+    // Switch to credits mode - show original credit values multiplied by token multiplier for display
+    contextInput.value = (originalContextCredits * tokenMultiplier).toFixed(6);
+    generationInput.value = (originalGenerationCredits * tokenMultiplier).toFixed(6);
+    contextUnit.textContent = `(credits per ${displayUnit})`;
+    generationUnit.textContent = `(credits per ${displayUnit})`;
     
     creditBtn.className = 'flex-1 px-3 py-2 text-sm bg-blue-600 text-white';
     usdBtn.className = 'flex-1 px-3 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200';
@@ -1007,9 +1207,23 @@ function switchPricingMode(mode) {
 async function saveModelPricing(modelId) {
   const contextInput = document.getElementById('contextPriceInput');
   const generationInput = document.getElementById('generationPriceInput');
-  const contextPrice = parseFloat(contextInput.value);
-  const generationPrice = parseFloat(generationInput.value);
+  const displayContextPrice = parseFloat(contextInput.value);
+  const displayGenerationPrice = parseFloat(generationInput.value);
   const priceMode = window.currentPricingMode || 'credits';
+  const tokenMultiplier = window.tokenMultiplier || 1000;
+
+  // Convert displayed prices back to per-token prices for storage in database
+  let contextPrice, generationPrice;
+  
+  if (priceMode === 'usd') {
+    // Input is in USD per displayUnit, convert to USD per token
+    contextPrice = displayContextPrice / tokenMultiplier;
+    generationPrice = displayGenerationPrice / tokenMultiplier;
+  } else {
+    // Input is in credits per displayUnit, convert to credits per token
+    contextPrice = displayContextPrice / tokenMultiplier;
+    generationPrice = displayGenerationPrice / tokenMultiplier;
+  }
 
   const res = await authenticatedFetch('/api/credits/models/update', {
     method: 'POST',
@@ -1024,11 +1238,11 @@ async function saveModelPricing(modelId) {
 
   const result = await res.json();
   if (result.status === 'success') {
-    alert(`Model pricing successfully updated.`);
+    notifications.success(`Model pricing successfully updated.`);
     document.querySelector('.fixed').remove();
     renderModelsView();
   } else {
-    alert('Error saving model pricing');
+    notifications.error('Error saving model pricing');
   }
 }
 
@@ -1223,11 +1437,27 @@ async function renderSettingsView() {
             <input type="number" id="usdToCreditRatio" value="${currentSettings.usd_to_credit_ratio}" 
                    step="0.01" min="0.01" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md bg-transparent">
           </div>
+          
+          <div>
+            <label for="tokenMultiplier" class="block text-sm font-medium mb-2">
+              Token Display Multiplier
+            </label>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">
+              How should token prices be displayed? (1 = per token, 1000 = per 1K tokens, 1000000 = per 1M tokens)
+            </p>
+            <select id="tokenMultiplier" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800">
+              <option value="1" ${currentSettings.token_multiplier == 1 ? 'selected' : ''}>1 token</option>
+              <option value="1000" ${currentSettings.token_multiplier == 1000 ? 'selected' : ''}>1K tokens (1,000)</option>
+              <option value="1000000" ${currentSettings.token_multiplier == 1000000 ? 'selected' : ''}>1M tokens (1,000,000)</option>
+            </select>
+          </div>
+          
           <div class="flex items-center justify-between bg-gray-50 dark:bg-gray-700 p-3 rounded">
             <div>
-              <p class="text-sm font-medium">Current Rate:</p>
+              <p class="text-sm font-medium">Current Rates:</p>
               <p class="text-xs text-gray-600 dark:text-gray-400">$1 USD = ${currentSettings.usd_to_credit_ratio} credits</p>
               <p class="text-xs text-gray-600 dark:text-gray-400">1 credit = $${(1/currentSettings.usd_to_credit_ratio).toFixed(6)} USD</p>
+              <p class="text-xs text-gray-600 dark:text-gray-400">Display unit: ${currentSettings.token_multiplier == 1 ? '1 token' : currentSettings.token_multiplier == 1000 ? '1K tokens' : '1M tokens'}</p>
             </div>
           </div>
           <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
@@ -1247,9 +1477,15 @@ async function renderSettingsView() {
 
 async function saveSettings() {
   const ratio = parseFloat(document.getElementById('usdToCreditRatio').value);
+  const multiplier = parseInt(document.getElementById('tokenMultiplier').value);
   
   if (isNaN(ratio) || ratio <= 0) {
-    alert('Please enter a valid conversion ratio greater than 0');
+    notifications.warning('Please enter a valid conversion ratio greater than 0');
+    return;
+  }
+  
+  if (isNaN(multiplier) || ![1, 1000, 1000000].includes(multiplier)) {
+    notifications.warning('Please select a valid token multiplier');
     return;
   }
 
@@ -1258,18 +1494,19 @@ async function saveSettings() {
       method: 'POST',
       body: JSON.stringify({ 
         usd_to_credit_ratio: ratio,
+        token_multiplier: multiplier,
         actor: 'admin' 
       })
     });
 
     const result = await res.json();
     if (result.status === 'success') {
-      alert('Settings saved successfully!');
+      notifications.success('Settings saved successfully!');
       renderSettingsView(); // Refresh the view
     } else {
-      alert('Error saving settings');
+      notifications.error('Error saving settings');
     }
   } catch (err) {
-    alert(`Error saving settings: ${err.message}`);
+    notifications.error(`Error saving settings: ${err.message}`);
   }
 }
