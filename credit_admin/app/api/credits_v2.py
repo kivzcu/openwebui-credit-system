@@ -25,6 +25,7 @@ class ModelPricingRequest(BaseModel):
     model_id: str
     context_price: float
     generation_price: float
+    price_mode: str = "credits"  # "credits" or "usd"
     actor: str = "admin"
 
 class GroupUpdateRequest(BaseModel):
@@ -39,6 +40,10 @@ class CreditDeductionRequest(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     actor: str = "auto-system"
+
+class SettingsUpdateRequest(BaseModel):
+    usd_to_credit_ratio: float
+    actor: str = "admin"
 
 # User-specific endpoints (optimized for extensions)
 @router.get("/api/credits/user/{user_id}", tags=["credits"])
@@ -62,7 +67,7 @@ async def get_user_credits(user_id: str, _: bool = Depends(verify_api_key)):
         "default_credits": user_data.get("default_credits", 0)
     }
 
-@router.get("/api/credits/model/{model_id}", tags=["credits"])
+@router.get("/api/credits/model/{model_id:path}", tags=["credits"])
 async def get_model_pricing(model_id: str, _: bool = Depends(verify_api_key)):
     """Get specific model's pricing information - optimized for extensions"""
     model_data = db.get_model_pricing(model_id)
@@ -157,12 +162,17 @@ async def get_all_models(current_user: User = Depends(get_current_admin_user)):
     # Get all models from our local database (availability is already stored)
     models = db.get_all_models()
     
+    # Get USD conversion ratio for display
+    usd_ratio = db.get_usd_to_credit_ratio()
+    
     return [
         {
             "id": model["id"],
             "name": model["name"],
             "context_price": model["context_price"],
             "generation_price": model["generation_price"],
+            "context_price_usd": db.credits_to_usd(model["context_price"]),
+            "generation_price_usd": db.credits_to_usd(model["generation_price"]),
             "is_available": model.get("is_available", True)  # Default to True for backward compatibility
         }
         for model in models
@@ -201,27 +211,37 @@ async def update_user_credits(request: CreditUpdateRequest, current_user: User =
 
 @router.post("/api/credits/models/update", tags=["credits"])
 async def update_model_pricing(request: ModelPricingRequest, current_user: User = Depends(get_current_admin_user)):
-    """Update model pricing (preserves availability status)"""
+    """Update model pricing (preserves availability status) - supports both USD and credit pricing"""
     # Get current model data to preserve availability status
     current_model = db.get_model_pricing(request.model_id)
     current_availability = current_model.get("is_available", True) if current_model else True
     
+    # Convert prices to credits if they're provided in USD
+    if request.price_mode == "usd":
+        context_price_credits = db.usd_to_credits(request.context_price)
+        generation_price_credits = db.usd_to_credits(request.generation_price)
+    else:
+        context_price_credits = request.context_price
+        generation_price_credits = request.generation_price
+    
     success = db.update_model_pricing(
         model_id=request.model_id,
         name=request.model_id,  # Use ID as name if not provided
-        context_price=request.context_price,
-        generation_price=request.generation_price,
+        context_price=context_price_credits,
+        generation_price=generation_price_credits,
         is_available=current_availability  # Preserve current availability status
     )
     
     if success:
         db.log_action("model_pricing_update", request.actor, 
-                     f"Updated model {request.model_id} pricing: context={request.context_price}, generation={request.generation_price}")
+                     f"Updated model {request.model_id} pricing: context={context_price_credits}, generation={generation_price_credits} (mode: {request.price_mode})")
         return {
             "status": "success",
             "id": request.model_id,
-            "context_price": request.context_price,
-            "generation_price": request.generation_price
+            "context_price": context_price_credits,
+            "generation_price": generation_price_credits,
+            "context_price_usd": db.credits_to_usd(context_price_credits),
+            "generation_price_usd": db.credits_to_usd(generation_price_credits)
         }
     else:
         raise HTTPException(status_code=500, detail="Failed to update model pricing")
@@ -249,8 +269,8 @@ async def update_group_credits(request: GroupUpdateRequest, current_user: User =
 
 # Transaction history and logs
 @router.get("/api/credits/user/{user_id}/transactions", tags=["credits"])
-async def get_user_transaction_history(user_id: str, limit: int = Query(100, ge=1, le=1000)):
-    """Get user's transaction history with user name"""
+async def get_user_transaction_history(user_id: str, limit: int = Query(100, ge=1, le=1000), current_user: User = Depends(get_current_admin_user)):
+    """Get user's transaction history with user name - Admin only"""
     transactions = db.get_user_transactions(user_id, limit)
     
     # Get user name once since all transactions belong to the same user
@@ -266,8 +286,8 @@ async def get_user_transaction_history(user_id: str, limit: int = Query(100, ge=
     return {"transactions": transactions}
 
 @router.get("/api/credits/transactions", tags=["credits"])
-async def get_all_transactions(limit: int = Query(100, ge=1, le=1000)):
-    """Get all transactions with user names (optimized)"""
+async def get_all_transactions(limit: int = Query(100, ge=1, le=1000), current_user: User = Depends(get_current_admin_user)):
+    """Get all transactions with user names (optimized) - Admin only"""
     transactions = db.get_all_transactions(limit)
     
     if not transactions:
@@ -286,8 +306,8 @@ async def get_all_transactions(limit: int = Query(100, ge=1, le=1000)):
     
     return {"transactions": transactions}
 
-@router.get("/api/credits/system-logs", tags=["credits"])
-async def get_system_logs(limit: int = Query(100, ge=1, le=1000)):
+@router.get("/api/credits/system-logs", tags=["logs"])
+async def get_system_logs(limit: int = Query(100, ge=1, le=1000), current_user: User = Depends(get_current_admin_user)):
     """Get system logs"""
     logs = db.get_logs(limit)
     return {"logs": logs}
@@ -312,6 +332,29 @@ async def get_public_model_pricing():
     ]
     
     return available_models
+
+# Settings endpoints
+@router.get("/api/credits/settings", tags=["settings"])
+async def get_settings(current_user: User = Depends(get_current_admin_user)):
+    """Get system settings - Admin only"""
+    return {
+        "usd_to_credit_ratio": db.get_usd_to_credit_ratio()
+    }
+
+@router.post("/api/credits/settings", tags=["settings"])
+async def update_settings(request: SettingsUpdateRequest, current_user: User = Depends(get_current_admin_user)):
+    """Update system settings - Admin only"""
+    success = db.set_usd_to_credit_ratio(request.usd_to_credit_ratio)
+    
+    if success:
+        db.log_action("settings_update", request.actor, 
+                     f"Updated USD to credit ratio to {request.usd_to_credit_ratio}")
+        return {
+            "status": "success",
+            "usd_to_credit_ratio": request.usd_to_credit_ratio
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to update settings")
 
 # Sync functions
 async def sync_user_from_openwebui(user_id: str):

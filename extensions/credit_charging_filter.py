@@ -14,7 +14,7 @@ from functools import partial
 
 # Support both HTTP and HTTPS based on environment
 CREDITS_API_PROTOCOL = os.getenv("CREDITS_API_PROTOCOL", "https")  # Default to HTTPS
-CREDITS_API_HOST = os.getenv("CREDITS_API_HOST", "localhost:8000")
+CREDITS_API_HOST = os.getenv("CREDITS_API_HOST", "147.228.121.27:8000")
 CREDITS_API_BASE_URL = f"{CREDITS_API_PROTOCOL}://{CREDITS_API_HOST}/api/credits"
 
 # SSL verification settings

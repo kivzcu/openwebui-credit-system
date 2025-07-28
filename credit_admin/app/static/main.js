@@ -107,6 +107,11 @@ function logout() {
   currentUser = null;
   localStorage.removeItem('authToken');
   showLoginForm();
+  // Clear any existing content to prevent confusion
+  const mainContent = document.getElementById('mainContent');
+  if (mainContent) {
+    mainContent.innerHTML = '<div class="text-center text-gray-500 py-8">Please log in to continue.</div>';
+  }
 }
 
 // Update fetch function to include auth header
@@ -203,6 +208,9 @@ function selectView(view) {
       break;
     case 'transactionLogs':
       renderTransactionLogsView();
+      break;
+    case 'settings':
+      renderSettingsView();
       break;
   }
 }
@@ -768,8 +776,8 @@ async function renderModelsView() {
         <tr>
           <th class="px-3 py-1.5">Model</th>
           <th class="px-3 py-1.5">Status</th>
-          <th class="px-3 py-1.5">Context Token Price</th>
-          <th class="px-3 py-1.5">Generation Token Price</th>
+          <th class="px-3 py-1.5">Context Price</th>
+          <th class="px-3 py-1.5">Generation Price</th>
           <th class="px-3 py-1.5 text-right">Actions</th>
         </tr>
       </thead>
@@ -790,8 +798,18 @@ async function renderModelsView() {
         <tr class="${rowClass}">
           <td class="px-3 py-1 ${nameClass}">${model.name}</td>
           <td class="px-3 py-1">${statusBadge}</td>
-          <td class="px-3 py-1 ${priceClass}">${model.context_price}</td>
-          <td class="px-3 py-1 ${priceClass}">${model.generation_price}</td>
+          <td class="px-3 py-1 ${priceClass}">
+            <div class="text-xs">
+              <div><strong>${model.context_price}</strong> credits</div>
+              <div class="text-gray-500">$${model.context_price_usd ? model.context_price_usd.toFixed(6) : 'N/A'}</div>
+            </div>
+          </td>
+          <td class="px-3 py-1 ${priceClass}">
+            <div class="text-xs">
+              <div><strong>${model.generation_price}</strong> credits</div>
+              <div class="text-gray-500">$${model.generation_price_usd ? model.generation_price_usd.toFixed(6) : 'N/A'}</div>
+            </div>
+          </td>
           <td class="px-3 py-1 text-right">
             <button class="px-2 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700" onclick="editModel('${model.id}')">Edit</button>
           </td>
@@ -848,9 +866,19 @@ container.innerHTML += `
   }
 }
 
-function editModel(modelId) {
+async function editModel(modelId) {
   const model = currentModels.find(m => m.id === modelId);
   if (!model) return;
+
+  // Fetch current settings for conversion ratio
+  let usdToCreditRatio = 1000.0; // Default fallback
+  try {
+    const settingsRes = await authenticatedFetch('/api/credits/settings');
+    const settings = await settingsRes.json();
+    usdToCreditRatio = settings.usd_to_credit_ratio || 1000.0;
+  } catch (err) {
+    console.warn('Could not fetch settings, using default conversion ratio:', err);
+  }
 
   const modal = document.createElement('div');
   modal.className = 'fixed inset-0 bg-black/30 flex items-center justify-center z-50';
@@ -860,12 +888,39 @@ function editModel(modelId) {
         <h2 class="text-lg font-bold">Edit Model: ${model.name}</h2>
         <button onclick="this.closest('.fixed').remove()">✕</button>
       </div>
-      <div class="space-y-3">
-        <label class="block text-sm">Context Token Price</label>
-        <input type="number" id="contextPriceInput" value="${model.context_price}" step="0.001" class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
-        <label class="block text-sm">Generation Token Price</label>
-        <input type="number" id="generationPriceInput" value="${model.generation_price}" step="0.0001" class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
+      
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-2">Pricing Mode</label>
+        <div class="flex border border-gray-300 dark:border-gray-700 rounded-md overflow-hidden">
+          <button id="creditModeBtn" onclick="switchPricingMode('credits')" 
+                  class="flex-1 px-3 py-2 text-sm bg-blue-600 text-white">Credits</button>
+          <button id="usdModeBtn" onclick="switchPricingMode('usd')" 
+                  class="flex-1 px-3 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200">USD</button>
+        </div>
       </div>
+      
+      <div class="space-y-3">
+        <div>
+          <label class="block text-sm">Context Token Price <span id="contextUnit">(credits)</span></label>
+          <input type="number" id="contextPriceInput" value="${model.context_price}" step="0.000001" 
+                 oninput="updateConversion()" 
+                 class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
+          <div id="contextConversion" class="text-xs text-gray-500 mt-1">
+            ≈ $${model.context_price_usd ? model.context_price_usd.toFixed(6) : 'N/A'} USD
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm">Generation Token Price <span id="generationUnit">(credits)</span></label>
+          <input type="number" id="generationPriceInput" value="${model.generation_price}" step="0.000001" 
+                 oninput="updateConversion()" 
+                 class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
+          <div id="generationConversion" class="text-xs text-gray-500 mt-1">
+            ≈ $${model.generation_price_usd ? model.generation_price_usd.toFixed(6) : 'N/A'} USD
+          </div>
+        </div>
+      </div>
+      
       <div class="flex justify-end gap-2 pt-4">
         <button onclick="this.closest('.fixed').remove()" class="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded-md">Cancel</button>
         <button onclick="saveModelPricing('${model.id}')" class="px-3 py-1 bg-blue-600 text-white rounded-md">Save</button>
@@ -873,6 +928,80 @@ function editModel(modelId) {
     </div>`;
 
   document.getElementById('modalRoot').appendChild(modal);
+  
+  // Store the current pricing mode, model data, and conversion ratio
+  window.currentPricingMode = 'credits';
+  window.currentModelData = model;
+  window.usdToCreditRatio = usdToCreditRatio;
+}
+
+function updateConversion() {
+  const contextInput = document.getElementById('contextPriceInput');
+  const generationInput = document.getElementById('generationPriceInput');
+  const contextConversion = document.getElementById('contextConversion');
+  const generationConversion = document.getElementById('generationConversion');
+  
+  if (!contextInput || !generationInput || !window.usdToCreditRatio) return;
+  
+  const contextValue = parseFloat(contextInput.value) || 0;
+  const generationValue = parseFloat(generationInput.value) || 0;
+  const ratio = window.usdToCreditRatio;
+  
+  if (window.currentPricingMode === 'usd') {
+    // Converting USD to credits for display
+    contextConversion.textContent = `≈ ${(contextValue * ratio).toFixed(3)} credits`;
+    generationConversion.textContent = `≈ ${(generationValue * ratio).toFixed(3)} credits`;
+  } else {
+    // Converting credits to USD for display
+    contextConversion.textContent = `≈ $${(contextValue / ratio).toFixed(6)} USD`;
+    generationConversion.textContent = `≈ $${(generationValue / ratio).toFixed(6)} USD`;
+  }
+}
+
+function switchPricingMode(mode) {
+  const model = window.currentModelData;
+  const ratio = window.usdToCreditRatio;
+  if (!model || !ratio) return;
+  
+  const contextInput = document.getElementById('contextPriceInput');
+  const generationInput = document.getElementById('generationPriceInput');
+  const contextUnit = document.getElementById('contextUnit');
+  const generationUnit = document.getElementById('generationUnit');
+  const creditBtn = document.getElementById('creditModeBtn');
+  const usdBtn = document.getElementById('usdModeBtn');
+  
+  if (mode === 'usd') {
+    // Switch to USD mode - convert current credit values to USD
+    const currentContextCredits = parseFloat(contextInput.value) || model.context_price;
+    const currentGenerationCredits = parseFloat(generationInput.value) || model.generation_price;
+    
+    contextInput.value = (currentContextCredits / ratio).toFixed(6);
+    generationInput.value = (currentGenerationCredits / ratio).toFixed(6);
+    contextUnit.textContent = '(USD per token)';
+    generationUnit.textContent = '(USD per token)';
+    
+    creditBtn.className = 'flex-1 px-3 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200';
+    usdBtn.className = 'flex-1 px-3 py-2 text-sm bg-blue-600 text-white';
+    
+    window.currentPricingMode = 'usd';
+  } else {
+    // Switch to credits mode - convert current USD values to credits
+    const currentContextUsd = parseFloat(contextInput.value) || (model.context_price / ratio);
+    const currentGenerationUsd = parseFloat(generationInput.value) || (model.generation_price / ratio);
+    
+    contextInput.value = (currentContextUsd * ratio).toFixed(3);
+    generationInput.value = (currentGenerationUsd * ratio).toFixed(3);
+    contextUnit.textContent = '(credits)';
+    generationUnit.textContent = '(credits)';
+    
+    creditBtn.className = 'flex-1 px-3 py-2 text-sm bg-blue-600 text-white';
+    usdBtn.className = 'flex-1 px-3 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200';
+    
+    window.currentPricingMode = 'credits';
+  }
+  
+  // Update conversion display
+  updateConversion();
 }
 
 async function saveModelPricing(modelId) {
@@ -880,10 +1009,17 @@ async function saveModelPricing(modelId) {
   const generationInput = document.getElementById('generationPriceInput');
   const contextPrice = parseFloat(contextInput.value);
   const generationPrice = parseFloat(generationInput.value);
+  const priceMode = window.currentPricingMode || 'credits';
 
   const res = await authenticatedFetch('/api/credits/models/update', {
     method: 'POST',
-    body: JSON.stringify({ model_id: modelId, context_price: contextPrice, generation_price: generationPrice, actor: 'admin' })
+    body: JSON.stringify({ 
+      model_id: modelId, 
+      context_price: contextPrice, 
+      generation_price: generationPrice, 
+      price_mode: priceMode,
+      actor: 'admin' 
+    })
   });
 
   const result = await res.json();
@@ -1055,5 +1191,85 @@ async function renderTransactionLogsView() {
       return;
     }
     container.innerHTML += `<p class="text-red-500">Error loading transaction logs: ${err.message}</p>`;
+  }
+}
+
+// Global variables for settings
+let currentSettings = {};
+
+async function renderSettingsView() {
+  const container = document.getElementById('mainContent');
+  container.innerHTML = `
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-2xl font-bold">System Settings</h2>
+    </div>
+  `;
+
+  try {
+    const res = await authenticatedFetch('/api/credits/settings');
+    currentSettings = await res.json();
+
+    container.innerHTML += `
+      <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg max-w-2xl">
+        <h3 class="text-lg font-semibold mb-4">Currency Conversion</h3>
+        <div class="space-y-4">
+          <div>
+            <label for="usdToCreditRatio" class="block text-sm font-medium mb-2">
+              USD to Credit Conversion Ratio
+            </label>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">
+              How many credits equal $1 USD? (e.g., 1000 means $1 = 1000 credits)
+            </p>
+            <input type="number" id="usdToCreditRatio" value="${currentSettings.usd_to_credit_ratio}" 
+                   step="0.01" min="0.01" class="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md bg-transparent">
+          </div>
+          <div class="flex items-center justify-between bg-gray-50 dark:bg-gray-700 p-3 rounded">
+            <div>
+              <p class="text-sm font-medium">Current Rate:</p>
+              <p class="text-xs text-gray-600 dark:text-gray-400">$1 USD = ${currentSettings.usd_to_credit_ratio} credits</p>
+              <p class="text-xs text-gray-600 dark:text-gray-400">1 credit = $${(1/currentSettings.usd_to_credit_ratio).toFixed(6)} USD</p>
+            </div>
+          </div>
+          <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+            Save Settings
+          </button>
+        </div>
+      </div>
+    `;
+
+  } catch (err) {
+    if (err instanceof AuthenticationError) {
+      return;
+    }
+    container.innerHTML += `<p class="text-red-500">Error loading settings: ${err.message}</p>`;
+  }
+}
+
+async function saveSettings() {
+  const ratio = parseFloat(document.getElementById('usdToCreditRatio').value);
+  
+  if (isNaN(ratio) || ratio <= 0) {
+    alert('Please enter a valid conversion ratio greater than 0');
+    return;
+  }
+
+  try {
+    const res = await authenticatedFetch('/api/credits/settings', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        usd_to_credit_ratio: ratio,
+        actor: 'admin' 
+      })
+    });
+
+    const result = await res.json();
+    if (result.status === 'success') {
+      alert('Settings saved successfully!');
+      renderSettingsView(); // Refresh the view
+    } else {
+      alert('Error saving settings');
+    }
+  } catch (err) {
+    alert(`Error saving settings: ${err.message}`);
   }
 }

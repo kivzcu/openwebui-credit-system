@@ -105,6 +105,21 @@ class CreditDatabase:
                 )
             """)
             
+            # Settings table for configuration
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS credit_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Initialize default USD to credit conversion ratio
+            cursor.execute("""
+                INSERT OR IGNORE INTO credit_settings (key, value) 
+                VALUES ('usd_to_credit_ratio', '1000.0')
+            """)
+            
             # Indexes for better performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_users_group ON credit_users(group_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON credit_transactions(user_id)")
@@ -420,6 +435,55 @@ class CreditDatabase:
         except Exception as e:
             print(f"Error fetching user info from OpenWebUI: {e}")
             return {}
+    
+    def get_setting(self, key: str, default_value: Optional[str] = None) -> Optional[str]:
+        """Get a setting value"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM credit_settings WHERE key = ?", (key,))
+                row = cursor.fetchone()
+                return row['value'] if row else default_value
+        except Exception as e:
+            print(f"Error getting setting {key}: {e}")
+            return default_value
+    
+    def set_setting(self, key: str, value: str) -> bool:
+        """Set a setting value"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT OR REPLACE INTO credit_settings (key, value, updated_at) 
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                """, (key, value))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Error setting {key}: {e}")
+            return False
+    
+    def get_usd_to_credit_ratio(self) -> float:
+        """Get the current USD to credit conversion ratio"""
+        ratio_str = self.get_setting('usd_to_credit_ratio', '1000.0')
+        try:
+            return float(ratio_str) if ratio_str else 1000.0
+        except (ValueError, TypeError):
+            return 1000.0  # Default fallback
+    
+    def set_usd_to_credit_ratio(self, ratio: float) -> bool:
+        """Set the USD to credit conversion ratio"""
+        return self.set_setting('usd_to_credit_ratio', str(ratio))
+    
+    def credits_to_usd(self, credits: float) -> float:
+        """Convert credits to USD"""
+        ratio = self.get_usd_to_credit_ratio()
+        return credits / ratio
+    
+    def usd_to_credits(self, usd: float) -> float:
+        """Convert USD to credits"""
+        ratio = self.get_usd_to_credit_ratio()
+        return usd * ratio
 
 # Global database instance
 db = CreditDatabase()
