@@ -160,7 +160,10 @@ function showLoginForm() {
 function showAdminInterface() {
   document.getElementById('loginForm').classList.add('hidden');
   document.getElementById('adminInterface').classList.remove('hidden');
-  selectView('users');
+  
+  // Restore the last viewed page from localStorage, default to 'users'
+  const lastViewedPage = localStorage.getItem('lastViewedPage') || 'users';
+  selectView(lastViewedPage);
 }
 
 function hideError() {
@@ -331,7 +334,29 @@ async function verifyTokenSilently() {
   }
 }
 
+function updateNavigationHighlight(activeView) {
+  // Remove active class from all navigation buttons
+  const navButtons = document.querySelectorAll('[data-view]');
+  navButtons.forEach(button => {
+    button.classList.remove('bg-blue-600', 'text-white');
+    button.classList.add('hover:bg-gray-200', 'dark:hover:bg-gray-800');
+  });
+  
+  // Add active class to the current view button
+  const activeButton = document.querySelector(`[data-view="${activeView}"]`);
+  if (activeButton) {
+    activeButton.classList.add('bg-blue-600', 'text-white');
+    activeButton.classList.remove('hover:bg-gray-200', 'dark:hover:bg-gray-800');
+  }
+}
+
 function selectView(view) {
+  // Save the current view to localStorage
+  localStorage.setItem('lastViewedPage', view);
+  
+  // Update navigation highlighting
+  updateNavigationHighlight(view);
+  
   switch (view) {
     case 'users':
       renderUsersView();
@@ -404,12 +429,16 @@ function applyModelFilters() {
     // Apply status filter
     if (shouldShow && statusFilter !== 'all') {
       const statusCell = row.querySelector('td:nth-child(2)');
-      if (statusCell) {
+      const modelNameCell = row.querySelector('td:nth-child(1)');
+      if (statusCell && modelNameCell) {
         const isAvailable = statusCell.textContent.includes('Available') && !statusCell.textContent.includes('Unavailable');
+        const isFree = modelNameCell.textContent.includes('FREE');
         
         if (statusFilter === 'available' && !isAvailable) {
           shouldShow = false;
         } else if (statusFilter === 'unavailable' && isAvailable) {
+          shouldShow = false;
+        } else if (statusFilter === 'free' && !isFree) {
           shouldShow = false;
         }
       }
@@ -508,6 +537,8 @@ function updateLegendHighlight(activeFilter) {
     activeItem = document.querySelector('[onclick="filterModelsByStatus(\'available\')"]');
   } else if (activeFilter === 'unavailable') {
     activeItem = document.querySelector('[onclick="filterModelsByStatus(\'unavailable\')"]');
+  } else if (activeFilter === 'free') {
+    activeItem = document.querySelector('[onclick="filterModelsByStatus(\'free\')"]');
   } else if (activeFilter === 'all') {
     activeItem = document.querySelector('[onclick="filterModelsByStatus(\'all\')"]');
   }
@@ -886,6 +917,7 @@ async function renderModelsView() {
           <option value="all">All Models</option>
           <option value="available">Available Only</option>
           <option value="unavailable">Unavailable Only</option>
+          <option value="free">Free Models Only</option>
         </select>
       </div>
       <div class="flex items-center border border-gray-300 dark:border-gray-700 rounded-xl px-2 py-1 w-64 bg-white dark:bg-gray-900">
@@ -941,9 +973,6 @@ async function renderModelsView() {
 
     for (const model of currentModels) {
       const isAvailable = model.is_available === true || model.is_available === 1;
-      const statusBadge = isAvailable
-        ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><span class="w-2 h-2 bg-green-400 rounded-full mr-1.5"></span>Available</span>'
-        : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"><span class="w-2 h-2 bg-red-400 rounded-full mr-1.5"></span>Unavailable</span>';
       
       const rowClass = 'bg-white dark:bg-gray-900 border-t';
       
@@ -955,22 +984,44 @@ async function renderModelsView() {
       const displayGenerationPrice = (model.generation_price * tokenMultiplier).toFixed(6);
       const displayContextPriceUsd = model.context_price_usd ? (model.context_price_usd * tokenMultiplier).toFixed(6) : 'N/A';
       const displayGenerationPriceUsd = model.generation_price_usd ? (model.generation_price_usd * tokenMultiplier).toFixed(6) : 'N/A';
+      
+      // Check if model is free
+      const isFree = model.is_free === true || model.is_free === 1;
+      
+      // Create status badge with free indicator for free models
+      let statusBadge;
+      if (isFree) {
+        // For free models, show both availability and free status side by side
+        statusBadge = isAvailable
+          ? '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><span class="w-2 h-2 bg-green-400 rounded-full mr-1.5"></span>Available</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>'
+          : '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"><span class="w-2 h-2 bg-red-400 rounded-full mr-1.5"></span>Unavailable</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>';
+      } else {
+        // For paid models, show only availability
+        statusBadge = isAvailable
+          ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><span class="w-2 h-2 bg-green-400 rounded-full mr-1.5"></span>Available</span>'
+          : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"><span class="w-2 h-2 bg-red-400 rounded-full mr-1.5"></span>Unavailable</span>';
+      }
+      
+      // Remove the duplicate FREE badge from model name since it's now in status
+      const freeBadge = '';
+      
+      const priceDisplay = isFree 
+        ? '<div class="text-xs"><div><strong>FREE</strong></div><div class="text-gray-500">No charge</div></div>'
+        : `<div class="text-xs"><div><strong>${displayContextPrice}</strong> credits</div><div class="text-gray-500">$${displayContextPriceUsd}</div></div>`;
+      
+      const genPriceDisplay = isFree 
+        ? '<div class="text-xs"><div><strong>FREE</strong></div><div class="text-gray-500">No charge</div></div>'
+        : `<div class="text-xs"><div><strong>${displayGenerationPrice}</strong> credits</div><div class="text-gray-500">$${displayGenerationPriceUsd}</div></div>`;
         
       table += `
         <tr class="${rowClass}">
-          <td class="px-3 py-1 ${nameClass}">${model.name}</td>
+          <td class="px-3 py-1 ${nameClass}">${model.name}${freeBadge}</td>
           <td class="px-3 py-1">${statusBadge}</td>
           <td class="px-3 py-1 ${priceClass}">
-            <div class="text-xs">
-              <div><strong>${displayContextPrice}</strong> credits</div>
-              <div class="text-gray-500">$${displayContextPriceUsd}</div>
-            </div>
+            ${priceDisplay}
           </td>
           <td class="px-3 py-1 ${priceClass}">
-            <div class="text-xs">
-              <div><strong>${displayGenerationPrice}</strong> credits</div>
-              <div class="text-gray-500">$${displayGenerationPriceUsd}</div>
-            </div>
+            ${genPriceDisplay}
           </td>
           <td class="px-3 py-1 text-right">
             <button class="px-2 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700" onclick="editModel('${model.id}')">Edit</button>
@@ -983,12 +1034,17 @@ async function renderModelsView() {
     // Add model summary
     const availableCount = currentModels.filter(m => m.is_available === true || m.is_available === 1).length;
     const unavailableCount = currentModels.length - availableCount;
+    const freeCount = currentModels.filter(m => m.is_free === true || m.is_free === 1).length;
 
     container.innerHTML += `
       <div class="flex items-center gap-4 mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
         <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors" onclick="filterModelsByStatus('available')" title="Click to show only available models">
           <span class="w-3 h-3 bg-green-400 rounded-full"></span>
           <span class="text-sm"><strong>${availableCount}</strong> Available Models</span>
+        </div>
+        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors" onclick="filterModelsByStatus('free')" title="Click to show only free models">
+          <span class="w-3 h-3 bg-blue-400 rounded-full"></span>
+          <span class="text-sm"><strong>${freeCount}</strong> Free Models</span>
         </div>
         <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors" onclick="filterModelsByStatus('unavailable')" title="Click to show only unavailable models">
           <span class="w-3 h-3 bg-red-400 rounded-full"></span>
@@ -1067,7 +1123,7 @@ async function editModel(modelId) {
         <button onclick="this.closest('.fixed').remove()">✕</button>
       </div>
       
-      <div class="mb-4">
+      <div class="mb-4" id="pricingModeSection">
         <label class="block text-sm font-medium mb-2">Pricing Mode</label>
         <div class="flex border border-gray-300 dark:border-gray-700 rounded-md overflow-hidden">
           <button id="creditModeBtn" onclick="switchPricingMode('credits')" 
@@ -1077,7 +1133,16 @@ async function editModel(modelId) {
         </div>
       </div>
       
-      <div class="space-y-3">
+      <div class="mb-4">
+        <label class="flex items-center gap-2">
+          <input type="checkbox" id="freeModelCheckbox" ${(model.is_free === true || model.is_free === 1) ? 'checked' : ''} 
+                 onchange="toggleFreeModel()" 
+                 class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600">
+          <span class="text-sm font-medium">🆓 Free Model (no credits charged)</span>
+        </label>
+      </div>
+      
+      <div class="space-y-3" id="pricingFields">
         <div>
           <label class="block text-sm">Context Token Price <span id="contextUnit">(credits per ${displayUnit})</span></label>
           <input type="number" id="contextPriceInput" value="${displayContextPrice}" step="any" 
@@ -1115,6 +1180,31 @@ async function editModel(modelId) {
   // Always store the original credit values (per 1 token from DB) for accurate conversion
   window.originalContextCredits = model.context_price;
   window.originalGenerationCredits = model.generation_price;
+  
+  // Initialize the free model state after the modal is in the DOM
+  setTimeout(() => {
+    toggleFreeModel();
+  }, 10);
+}
+
+function toggleFreeModel() {
+  const freeCheckbox = document.getElementById('freeModelCheckbox');
+  const pricingFields = document.getElementById('pricingFields');
+  const pricingModeSection = document.getElementById('pricingModeSection');
+  
+  if (freeCheckbox && pricingFields && pricingModeSection) {
+    const isFree = freeCheckbox.checked;
+    
+    if (isFree) {
+      // Hide pricing fields and mode buttons when free is checked
+      pricingFields.style.display = 'none';
+      pricingModeSection.style.display = 'none';
+    } else {
+      // Show pricing fields and mode buttons when free is unchecked
+      pricingFields.style.display = 'block';
+      pricingModeSection.style.display = 'block';
+    }
+  }
 }
 
 function updateConversion() {
@@ -1207,15 +1297,21 @@ function switchPricingMode(mode) {
 async function saveModelPricing(modelId) {
   const contextInput = document.getElementById('contextPriceInput');
   const generationInput = document.getElementById('generationPriceInput');
-  const displayContextPrice = parseFloat(contextInput.value);
-  const displayGenerationPrice = parseFloat(generationInput.value);
+  const freeCheckbox = document.getElementById('freeModelCheckbox');
+  const displayContextPrice = parseFloat(contextInput.value) || 0;
+  const displayGenerationPrice = parseFloat(generationInput.value) || 0;
   const priceMode = window.currentPricingMode || 'credits';
   const tokenMultiplier = window.tokenMultiplier || 1000;
+  const isFree = freeCheckbox.checked;
 
   // Convert displayed prices back to per-token prices for storage in database
   let contextPrice, generationPrice;
   
-  if (priceMode === 'usd') {
+  if (isFree) {
+    // For free models, set prices to 0
+    contextPrice = 0;
+    generationPrice = 0;
+  } else if (priceMode === 'usd') {
     // Input is in USD per displayUnit, convert to USD per token
     contextPrice = displayContextPrice / tokenMultiplier;
     generationPrice = displayGenerationPrice / tokenMultiplier;
@@ -1232,6 +1328,7 @@ async function saveModelPricing(modelId) {
       context_price: contextPrice, 
       generation_price: generationPrice, 
       price_mode: priceMode,
+      is_free: isFree,
       actor: 'admin' 
     })
   });

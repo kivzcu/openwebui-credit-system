@@ -578,24 +578,29 @@
                 this.modelsContainer.style.display = 'grid';
                 this.noResults.style.display = 'none';
 
-                this.modelsContainer.innerHTML = this.filteredModels.map(model => `
-                    <div class="model-card">
-                        <div class="model-name">
-                            <div class="model-icon">${this.getModelIcon(model.name)}</div>
-                            <span>${model.name}</span>
-                        </div>
-                        <div class="pricing-info">
-                            <div class="price-item">
-                                <div class="price-label">Context Credits ${this.getPriceUnit()}</div>
-                                <div class="price-value">${this.formatPrice(model.context_price)}</div>
+                this.modelsContainer.innerHTML = this.filteredModels.map(model => {
+                    const isFree = model.is_free === true || model.is_free === 1;
+                    const freeBadge = isFree ? '<span style="background: #10b981; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 8px;">FREE</span>' : '';
+                    
+                    return `
+                        <div class="model-card">
+                            <div class="model-name">
+                                <div class="model-icon">${this.getModelIcon(model.name)}</div>
+                                <span>${model.name}${freeBadge}</span>
                             </div>
-                            <div class="price-item">
-                                <div class="price-label">Generation Credits ${this.getPriceUnit()}</div>
-                                <div class="price-value">${this.formatPrice(model.generation_price)}</div>
+                            <div class="pricing-info">
+                                <div class="price-item">
+                                    <div class="price-label">${isFree ? 'Context Usage' : `Context Credits ${this.getPriceUnit()}`}</div>
+                                    <div class="price-value">${isFree ? 'FREE' : this.formatPrice(model.context_price)}</div>
+                                </div>
+                                <div class="price-item">
+                                    <div class="price-label">${isFree ? 'Generation Usage' : `Generation Credits ${this.getPriceUnit()}`}</div>
+                                    <div class="price-value">${isFree ? 'FREE' : this.formatPrice(model.generation_price)}</div>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
             }
 
             getModelIcon(modelName) {

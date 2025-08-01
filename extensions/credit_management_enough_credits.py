@@ -100,6 +100,21 @@ class Filter:
             body["messages"][-1]["content"] += "\n\nModel not found in cost list."
             return body
 
+        # Check if model is free - if so, allow the request without credit check
+        is_free = model_data.get("is_free", False)
+        if is_free:
+            if self.valves.show_status and __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": "🆓 Free model - no credits charged.",
+                            "done": True,
+                        },
+                    }
+                )
+            return body
+
         context_price = model_data.get("context_price", 0)
         cost = prompt_tokens * context_price
         credits = user_data.get("credits", 0)

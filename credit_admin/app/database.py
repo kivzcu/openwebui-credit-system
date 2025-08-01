@@ -76,6 +76,13 @@ class CreditDatabase:
                 # Column already exists
                 pass
             
+            # Add is_free column if it doesn't exist (migration)
+            try:
+                cursor.execute("ALTER TABLE credit_models ADD COLUMN is_free BOOLEAN NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+            
             # Transaction history
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS credit_transactions (
@@ -309,15 +316,26 @@ class CreditDatabase:
             conn.commit()
             return cursor.rowcount > 0
 
-    def update_model_pricing(self, model_id: str, name: str, context_price: float, 
-                           generation_price: float, is_available: bool = True) -> bool:
-        """Update model pricing and availability status"""
+    def update_model_free_status(self, model_id: str, is_free: bool) -> bool:
+        """Update model free status only"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT OR REPLACE INTO credit_models (id, name, context_price, generation_price, is_available, updated_at)
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (model_id, name, context_price, generation_price, is_available))
+                UPDATE credit_models SET is_free = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (is_free, model_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def update_model_pricing(self, model_id: str, name: str, context_price: float, 
+                           generation_price: float, is_available: bool = True, is_free: bool = False) -> bool:
+        """Update model pricing, availability status, and free status"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO credit_models (id, name, context_price, generation_price, is_available, is_free, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (model_id, name, context_price, generation_price, is_available, is_free))
             conn.commit()
             return True
     

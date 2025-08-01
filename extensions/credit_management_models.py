@@ -59,11 +59,18 @@ class Action:
 
         context_price = model_data.get("context_price", 0)
         generation_price = model_data.get("generation_price", 0)
+        is_free = model_data.get("is_free", False)
 
-        body["messages"][-1]["content"] += (
-            f"\n\n📊 Model **{model_name}** pricing:\n"
-            f"• Prompt (input): {context_price} credits/token\n"
-            f"• Completion (output): {generation_price} credits/token"
-        )
+        if is_free:
+            body["messages"][-1]["content"] += (
+                f"\n\n📊 Model **{model_name}** pricing:\n"
+                f"🆓 **FREE MODEL** - No credits required"
+            )
+        else:
+            body["messages"][-1]["content"] += (
+                f"\n\n📊 Model **{model_name}** pricing:\n"
+                f"• Prompt (input): {context_price} credits/token\n"
+                f"• Completion (output): {generation_price} credits/token"
+            )
 
         return body

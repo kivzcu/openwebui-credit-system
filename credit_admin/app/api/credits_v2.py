@@ -26,6 +26,7 @@ class ModelPricingRequest(BaseModel):
     context_price: float
     generation_price: float
     price_mode: str = "credits"  # "credits" or "usd"
+    is_free: bool = False  # whether the model is free
     actor: str = "admin"
 
 class GroupUpdateRequest(BaseModel):
@@ -88,7 +89,8 @@ async def get_model_pricing(model_id: str, _: bool = Depends(verify_api_key)):
         "id": model_data["id"],
         "name": model_data["name"],
         "context_price": model_data["context_price"],
-        "generation_price": model_data["generation_price"]
+        "generation_price": model_data["generation_price"],
+        "is_free": model_data.get("is_free", False)
     }
 
 # Optimized credit deduction endpoint for extensions
@@ -107,26 +109,41 @@ async def deduct_credits_for_tokens(request: CreditDeductionRequest, _: bool = D
     if not model_data:
         raise HTTPException(status_code=404, detail="Model pricing not found")
 
-    # Calculate cost (only prompt_tokens and completion_tokens count for cost)
-    prompt_cost = request.prompt_tokens * model_data["context_price"]
-    completion_cost = request.completion_tokens * model_data["generation_price"]
-    total_cost = prompt_cost + completion_cost
+    # Check if model is free
+    is_free = model_data.get("is_free", False)
+    
+    if is_free:
+        # For free models, no credits are deducted
+        total_cost = 0.0
+        prompt_cost = 0.0
+        completion_cost = 0.0
+        deducted = 0.0
+        new_balance = user_data["balance"]
+        
+        # Still log the usage for tracking purposes
+        db.log_action("free_model_usage", request.actor, 
+                     f"Free model usage: {request.model_id} - {request.prompt_tokens} prompt + {request.completion_tokens} completion tokens")
+    else:
+        # Calculate cost (only prompt_tokens and completion_tokens count for cost)
+        prompt_cost = request.prompt_tokens * model_data["context_price"]
+        completion_cost = request.completion_tokens * model_data["generation_price"]
+        total_cost = prompt_cost + completion_cost
 
-    # Deduct credits and log all token details
-    deducted, new_balance = db.deduct_credits(
-        user_id=request.user_id,
-        amount=total_cost,
-        actor=request.actor,
-        reason=(
-            f"Token usage: {request.prompt_tokens} prompt + {request.completion_tokens} completion tokens"
-            f" (cached_tokens={request.cached_tokens}, reasoning_tokens={request.reasoning_tokens})"
-        ),
-        model_id=request.model_id,
-        prompt_tokens=request.prompt_tokens,
-        completion_tokens=request.completion_tokens,
-        cached_tokens=request.cached_tokens,
-        reasoning_tokens=request.reasoning_tokens
-    )
+        # Deduct credits and log all token details
+        deducted, new_balance = db.deduct_credits(
+            user_id=request.user_id,
+            amount=total_cost,
+            actor=request.actor,
+            reason=(
+                f"Token usage: {request.prompt_tokens} prompt + {request.completion_tokens} completion tokens"
+                f" (cached_tokens={request.cached_tokens}, reasoning_tokens={request.reasoning_tokens})"
+            ),
+            model_id=request.model_id,
+            prompt_tokens=request.prompt_tokens,
+            completion_tokens=request.completion_tokens,
+            cached_tokens=request.cached_tokens,
+            reasoning_tokens=request.reasoning_tokens
+        )
 
     return {
         "success": True,
@@ -136,7 +153,8 @@ async def deduct_credits_for_tokens(request: CreditDeductionRequest, _: bool = D
         "prompt_cost": prompt_cost,
         "completion_cost": completion_cost,
         "cached_tokens": request.cached_tokens,
-        "reasoning_tokens": request.reasoning_tokens
+        "reasoning_tokens": request.reasoning_tokens,
+        "is_free": is_free
     }
 
 # Batch endpoint for admin UI (when you need multiple users/models)
@@ -183,7 +201,8 @@ async def get_all_models(current_user: User = Depends(get_current_admin_user)):
             "generation_price": model["generation_price"],
             "context_price_usd": db.credits_to_usd(model["context_price"]),
             "generation_price_usd": db.credits_to_usd(model["generation_price"]),
-            "is_available": model.get("is_available", True)  # Default to True for backward compatibility
+            "is_available": model.get("is_available", True),  # Default to True for backward compatibility
+            "is_free": model.get("is_free", False)  # Default to False for backward compatibility
         }
         for model in models
     ]
@@ -239,22 +258,47 @@ async def update_model_pricing(request: ModelPricingRequest, current_user: User 
         name=request.model_id,  # Use ID as name if not provided
         context_price=context_price_credits,
         generation_price=generation_price_credits,
-        is_available=current_availability  # Preserve current availability status
+        is_available=current_availability,  # Preserve current availability status
+        is_free=request.is_free  # Update free status
     )
     
     if success:
         db.log_action("model_pricing_update", request.actor, 
-                     f"Updated model {request.model_id} pricing: context={context_price_credits}, generation={generation_price_credits} (mode: {request.price_mode})")
+                     f"Updated model {request.model_id} pricing: context={context_price_credits}, generation={generation_price_credits}, is_free={request.is_free} (mode: {request.price_mode})")
         return {
             "status": "success",
             "id": request.model_id,
             "context_price": context_price_credits,
             "generation_price": generation_price_credits,
             "context_price_usd": db.credits_to_usd(context_price_credits),
-            "generation_price_usd": db.credits_to_usd(generation_price_credits)
+            "generation_price_usd": db.credits_to_usd(generation_price_credits),
+            "is_free": request.is_free
         }
     else:
         raise HTTPException(status_code=500, detail="Failed to update model pricing")
+
+@router.post("/api/credits/models/update-free-status", tags=["credits"])
+async def update_model_free_status(request: dict, current_user: User = Depends(get_current_admin_user)):
+    """Update model free status only"""
+    model_id = request.get("model_id")
+    is_free = request.get("is_free", False)
+    actor = request.get("actor", "admin")
+    
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    
+    success = db.update_model_free_status(model_id, is_free)
+    
+    if success:
+        db.log_action("model_free_status_update", actor, 
+                     f"Updated model {model_id} free status to {is_free}")
+        return {
+            "status": "success",
+            "model_id": model_id,
+            "is_free": is_free
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to update model free status")
 
 @router.post("/api/credits/groups/update", tags=["credits"])
 async def update_group_credits(request: GroupUpdateRequest, current_user: User = Depends(get_current_admin_user)):
@@ -335,7 +379,8 @@ async def get_public_model_pricing():
             "id": model["id"],
             "name": model["name"],
             "context_price": model["context_price"],
-            "generation_price": model["generation_price"]
+            "generation_price": model["generation_price"],
+            "is_free": model.get("is_free", False)
         }
         for model in all_models
         if model.get("is_available", True)  # Default to True for backward compatibility

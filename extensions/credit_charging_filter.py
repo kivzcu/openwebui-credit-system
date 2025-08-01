@@ -176,6 +176,23 @@ class Filter:
                 )
             return body
 
+        # Check if model is free
+        is_free = model_data.get("is_free", False)
+        
+        if is_free:
+            # For free models, skip credit deduction
+            if self.valves.show_status and __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": "🆓 Free model - no credits charged.",
+                            "done": True,
+                        },
+                    }
+                )
+            return body
+
         context_price = float(model_data.get("context_price", 0))
         generation_price = float(model_data.get("generation_price", 0))
         credits = float(user_data.get("credits", 0))
