@@ -114,9 +114,12 @@ class Filter:
             completion_tokens = usage["completion_tokens"]
             self.estimation_warning = ""  # Exact cost, no warning
             actor = "model-usage"
-            # Print cached tokens to stdout
+            
+            # Extract cached tokens and reasoning tokens
             cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-            print(f"Cached tokens: {cached_tokens}")
+            reasoning_tokens = usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
+            
+            print(f"Token details - Cached: {cached_tokens}, Reasoning: {reasoning_tokens}")
         else:
             # Fallback to manual counting if usage is not available
             prompt_messages = messages[:-1]
@@ -124,6 +127,8 @@ class Filter:
                 self.count_tokens(msg, model_name) for msg in prompt_messages
             )
             completion_tokens = self.count_tokens(completion_message, model_name)
+            cached_tokens = 0  # Not available in manual counting
+            reasoning_tokens = 0  # Not available in manual counting
             if self.estimation_warning:
                 actor = "estimate-count"
             else:
@@ -190,6 +195,8 @@ class Filter:
                         "model_id": model_name,
                         "prompt_tokens": prompt_tokens,
                         "completion_tokens": completion_tokens,
+                        "cached_tokens": cached_tokens,
+                        "reasoning_tokens": reasoning_tokens,
                         "actor": actor,
                     },
                     headers=headers,

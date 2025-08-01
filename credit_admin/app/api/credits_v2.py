@@ -39,6 +39,8 @@ class CreditDeductionRequest(BaseModel):
     model_id: str
     prompt_tokens: int
     completion_tokens: int
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
     actor: str = "auto-system"
 
 class SettingsUpdateRequest(BaseModel):
@@ -94,40 +96,47 @@ async def get_model_pricing(model_id: str, _: bool = Depends(verify_api_key)):
 async def deduct_credits_for_tokens(request: CreditDeductionRequest, _: bool = Depends(verify_api_key)):
     """
     Optimized endpoint for credit deduction based on token usage.
-    Used by extensions instead of the old inefficient method.
+    Now also accepts cached_tokens and reasoning_tokens for logging.
     """
     # Get user and model data efficiently
     user_data = db.get_user_credits(request.user_id)
     if not user_data:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     model_data = db.get_model_pricing(request.model_id)
     if not model_data:
         raise HTTPException(status_code=404, detail="Model pricing not found")
-    
-    # Calculate cost
+
+    # Calculate cost (only prompt_tokens and completion_tokens count for cost)
     prompt_cost = request.prompt_tokens * model_data["context_price"]
     completion_cost = request.completion_tokens * model_data["generation_price"]
     total_cost = prompt_cost + completion_cost
-    
-    # Deduct credits
+
+    # Deduct credits and log all token details
     deducted, new_balance = db.deduct_credits(
         user_id=request.user_id,
         amount=total_cost,
         actor=request.actor,
-        reason=f"Token usage: {request.prompt_tokens} prompt + {request.completion_tokens} completion tokens",
+        reason=(
+            f"Token usage: {request.prompt_tokens} prompt + {request.completion_tokens} completion tokens"
+            f" (cached_tokens={request.cached_tokens}, reasoning_tokens={request.reasoning_tokens})"
+        ),
         model_id=request.model_id,
         prompt_tokens=request.prompt_tokens,
-        completion_tokens=request.completion_tokens
+        completion_tokens=request.completion_tokens,
+        cached_tokens=request.cached_tokens,
+        reasoning_tokens=request.reasoning_tokens
     )
-    
+
     return {
         "success": True,
         "cost": total_cost,
         "deducted": deducted,
         "new_balance": new_balance,
         "prompt_cost": prompt_cost,
-        "completion_cost": completion_cost
+        "completion_cost": completion_cost,
+        "cached_tokens": request.cached_tokens,
+        "reasoning_tokens": request.reasoning_tokens
     }
 
 # Batch endpoint for admin UI (when you need multiple users/models)

@@ -256,33 +256,29 @@ class CreditDatabase:
     
     def deduct_credits(self, user_id: str, amount: float, actor: str = "system",
                       reason: str = "", model_id: Optional[str] = None, 
-                      prompt_tokens: Optional[int] = None, completion_tokens: Optional[int] = None) -> tuple[float, float]:
+                      prompt_tokens: Optional[int] = None, completion_tokens: Optional[int] = None,
+                      cached_tokens: Optional[int] = None, reasoning_tokens: Optional[int] = None) -> tuple[float, float]:
         """Deduct credits from user and return (deducted_amount, new_balance)"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            
             # Get current balance
             cursor.execute("SELECT balance FROM credit_users WHERE id = ?", (user_id,))
             row = cursor.fetchone()
             current_balance = row['balance'] if row else 0.0
-            
             # Calculate actual deduction
             deducted = min(current_balance, amount)
             new_balance = max(0.0, current_balance - amount)
-            
             # Update balance
             cursor.execute("""
                 UPDATE credit_users SET balance = ?, updated_at = CURRENT_TIMESTAMP 
                 WHERE id = ?
             """, (new_balance, user_id))
-            
             # Log transaction
             cursor.execute("""
                 INSERT INTO credit_transactions 
-                (user_id, amount, transaction_type, reason, actor, balance_after, model_id, prompt_tokens, completion_tokens)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, -deducted, "deduct", reason, actor, new_balance, model_id, prompt_tokens, completion_tokens))
-            
+                (user_id, amount, transaction_type, reason, actor, balance_after, model_id, prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, -deducted, "deduct", reason, actor, new_balance, model_id, prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens))
             conn.commit()
             return deducted, new_balance
     
