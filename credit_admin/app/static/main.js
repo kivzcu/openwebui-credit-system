@@ -376,6 +376,14 @@ function selectView(view) {
     case 'settings':
       renderSettingsView();
       break;
+    case 'statistics':
+    case 'currentUsage':
+    case 'monthlyStats':
+      renderCurrentUsageView();
+      break;
+    case 'yearlyStats':
+      renderYearlyStatsView();
+      break;
   }
 }
 
@@ -1606,4 +1614,548 @@ async function saveSettings() {
   } catch (err) {
     notifications.error(`Error saving settings: ${err.message}`);
   }
+}
+
+// Utility function to escape HTML
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Statistics Views
+async function renderCurrentUsageView() {
+  try {
+    // Fetch both current usage and prepare for monthly data
+    const currentRes = await authenticatedFetch('/api/credits/statistics/current-usage');
+    if (!currentRes.ok) throw new Error(`HTTP ${currentRes.status}`);
+    
+    const currentData = await currentRes.json();
+    
+    // Calculate summary statistics for current month
+    const totalCreditsUsed = currentData.current_usage.reduce((sum, user) => sum + user.usage.credits_used, 0);
+    const totalTransactions = currentData.current_usage.reduce((sum, user) => sum + user.usage.transactions_count, 0);
+    const activeUsers = currentData.current_usage.length;
+    
+    // Get unique models used
+    const allModels = new Set();
+    currentData.current_usage.forEach(user => {
+      user.usage.models_used.forEach(model => allModels.add(model));
+    });
+    const modelsUsed = allModels.size;
+    
+    // Try to get last month's data for the historical section
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+    const lastYear = lastMonth.getFullYear();
+    const lastMonthNum = lastMonth.getMonth() + 1;
+    
+    let monthlyData = { summary: null };
+    try {
+      const monthlyRes = await authenticatedFetch(`/api/credits/statistics/monthly?year=${lastYear}&month=${lastMonthNum}`);
+      if (monthlyRes.ok) {
+        monthlyData = await monthlyRes.json();
+      }
+    } catch (err) {
+      console.log('Could not load monthly data:', err);
+    }
+    
+    document.getElementById('mainContent').innerHTML = `
+      <div class="space-y-6">
+        <div class="flex justify-between items-center">
+          <h1 class="text-2xl font-bold">📊 Usage Statistics</h1>
+          <div class="flex space-x-2">
+            <select id="monthSelect" onchange="loadMonthlyData()" class="px-3 py-2 border rounded-md bg-white dark:bg-gray-800">
+              <option value="">Select Month</option>
+            </select>
+            <button onclick="loadMonthlyData()" class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">
+              🔄 Refresh
+            </button>
+          </div>
+        </div>
+
+        <!-- Statistics Container -->
+        <div id="statisticsContainer" class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
+          <div id="statisticsHeader">
+            <h2 class="text-xl font-semibold mb-4">� Current Month Usage (${currentData.year}-${String(currentData.month).padStart(2, '0')}) - Pending</h2>
+          </div>
+          
+          <!-- Warning for current month (incomplete data) -->
+          <div id="incompleteWarning" class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 mb-4">
+            <div class="flex items-center">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-600 dark:text-yellow-400 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <span class="text-sm text-yellow-800 dark:text-yellow-200">
+                <strong>Pending Usage:</strong> This shows current month usage that hasn't been finalized in monthly statistics yet.
+              </span>
+            </div>
+          </div>
+
+          <!-- Summary Cards -->
+          <div id="summaryCards" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+              <div class="text-sm font-medium text-green-800 dark:text-green-200">Total Credits Used</div>
+              <div id="totalCredits" class="text-2xl font-bold text-green-600 dark:text-green-400">${totalCreditsUsed.toFixed(2)}</div>
+            </div>
+            <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <div class="text-sm font-medium text-blue-800 dark:text-blue-200">Total Transactions</div>
+              <div id="totalTransactions" class="text-2xl font-bold text-blue-600 dark:text-blue-400">${totalTransactions}</div>
+            </div>
+            <div class="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-4">
+              <div class="text-sm font-medium text-purple-800 dark:text-purple-200">Active Users</div>
+              <div id="totalUsers" class="text-2xl font-bold text-purple-600 dark:text-purple-400">${activeUsers}</div>
+            </div>
+            <div class="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-4">
+              <div class="text-sm font-medium text-orange-800 dark:text-orange-200">Models Used</div>
+              <div id="totalModels" class="text-2xl font-bold text-orange-600 dark:text-orange-400">${modelsUsed}</div>
+            </div>
+          </div>
+
+          <!-- Unified Data Table -->
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead class="bg-gray-50 dark:bg-gray-800">
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">User</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Credits Used</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Transactions</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Models Used</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Current Balance</th>
+                </tr>
+              </thead>
+              <tbody id="statisticsTableBody" class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+                ${currentData.current_usage.map(user => `
+                  <tr class="hover:bg-gray-50 dark:hover:bg-gray-800">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <div>
+                        <div class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(user.user_name)}</div>
+                        <div class="text-sm text-gray-500 dark:text-gray-400">${escapeHtml(user.user_email)}</div>
+                      </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                      <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                        ${user.usage.credits_used.toFixed(2)}
+                      </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.usage.transactions_count}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.usage.models_used.length}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.current_balance.toFixed(2)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Populate month selector after the HTML is rendered
+    populateMonthSelector();
+    
+  } catch (err) {
+    document.getElementById('mainContent').innerHTML = `
+      <div class="text-center py-8">
+        <p class="text-red-600 dark:text-red-400">Error loading statistics: ${err.message}</p>
+      </div>
+    `;
+  }
+}
+
+// Function to populate the month selector dropdown
+function populateMonthSelector() {
+  const select = document.getElementById('monthSelect');
+  
+  if (!select) {
+    console.log('❌ monthSelect element not found!');
+    return;
+  }
+  
+  // Clear existing options except the first one
+  select.innerHTML = '<option value="">Current Month</option>';
+  
+  const currentDate = new Date();
+  const currentYear = currentDate.getFullYear();
+  const currentMonth = currentDate.getMonth() + 1;
+  
+  // Generate last 12 months excluding the current month
+  for (let i = 1; i <= 12; i++) {
+    const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const monthName = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    
+    const option = document.createElement('option');
+    option.value = `${year}-${month}`;
+    option.textContent = monthName;
+    select.appendChild(option);
+  }
+}
+
+// Function to load monthly data when a month is selected
+async function loadMonthlyData() {
+  const select = document.getElementById('monthSelect');
+  const selectedValue = select.value;
+  
+  // If no month selected, show current month data
+  if (!selectedValue) {
+    try {
+      const res = await authenticatedFetch('/api/credits/statistics/current-usage');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      
+      const currentData = await res.json();
+      
+      // Update header and show incomplete warning
+      document.getElementById('statisticsHeader').innerHTML = 
+        `<h2 class="text-xl font-semibold mb-4">📅 Current Month Usage (${currentData.year}-${String(currentData.month).padStart(2, '0')}) - Pending</h2>`;
+      
+      // Show incomplete warning
+      document.getElementById('incompleteWarning').style.display = 'block';
+      
+      // Calculate summary statistics for current month
+      const totalCreditsUsed = currentData.current_usage.reduce((sum, user) => sum + user.usage.credits_used, 0);
+      const totalTransactions = currentData.current_usage.reduce((sum, user) => sum + user.usage.transactions_count, 0);
+      const activeUsers = currentData.current_usage.length;
+      
+      // Get unique models used
+      const allModels = new Set();
+      currentData.current_usage.forEach(user => {
+        user.usage.models_used.forEach(model => allModels.add(model));
+      });
+      const modelsUsed = allModels.size;
+      
+      // Show and update summary cards for current month
+      const summaryCards = document.getElementById('summaryCards');
+      summaryCards.style.display = 'grid';
+      document.getElementById('totalCredits').textContent = totalCreditsUsed.toFixed(2);
+      document.getElementById('totalTransactions').textContent = totalTransactions;
+      document.getElementById('totalUsers').textContent = activeUsers;
+      document.getElementById('totalModels').textContent = modelsUsed;
+      
+      // Update table with current usage data
+      const tbody = document.getElementById('statisticsTableBody');
+      tbody.innerHTML = currentData.current_usage.map(user => `
+        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800">
+          <td class="px-6 py-4 whitespace-nowrap">
+            <div>
+              <div class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(user.user_name)}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400">${escapeHtml(user.user_email)}</div>
+            </div>
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+              ${user.usage.credits_used.toFixed(2)}
+            </span>
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.usage.transactions_count}</td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.usage.models_used.length}</td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.current_balance.toFixed(2)}</td>
+        </tr>
+      `).join('');
+      
+      if (currentData.current_usage.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" class="text-center py-8 text-gray-500 dark:text-gray-400">
+              No usage data for current month
+            </td>
+          </tr>
+        `;
+        
+        // Also reset summary cards for empty data
+        document.getElementById('totalCredits').textContent = '0.00';
+        document.getElementById('totalTransactions').textContent = '0';
+        document.getElementById('totalUsers').textContent = '0';
+        document.getElementById('totalModels').textContent = '0';
+      }
+      
+    } catch (err) {
+      notifications.error(`Error loading current usage: ${err.message}`);
+    }
+    return;
+  }
+
+  // Load historical month data
+  const [year, month] = selectedValue.split('-').map(Number);
+  
+  if (!year || !month) {
+    notifications.warning('Invalid month selection');
+    return;
+  }
+
+  try {
+    const res = await authenticatedFetch(`/api/credits/statistics/monthly?year=${year}&month=${month}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    
+    const data = await res.json();
+    
+    // Check if this is the current month
+    const currentDate = new Date();
+    const isCurrentMonth = (year === currentDate.getFullYear() && month === (currentDate.getMonth() + 1));
+    
+    // Update header
+    const monthName = getMonthName(month);
+    document.getElementById('statisticsHeader').innerHTML = 
+      `<h2 class="text-xl font-semibold mb-4">📅 ${monthName} ${year} Statistics${isCurrentMonth ? ' - Pending' : ''}</h2>`;
+    
+    // Show/hide incomplete warning based on whether it's current month
+    document.getElementById('incompleteWarning').style.display = isCurrentMonth ? 'block' : 'none';
+    
+    // Show/hide summary cards based on data availability
+    const hasSummary = data.summary && data.summary.total_transactions > 0;
+    const summaryCards = document.getElementById('summaryCards');
+    if (hasSummary) {
+      summaryCards.style.display = 'grid';
+      document.getElementById('totalCredits').textContent = data.summary.total_credits_used.toFixed(2);
+      document.getElementById('totalTransactions').textContent = data.summary.total_transactions;
+      document.getElementById('totalUsers').textContent = data.summary.unique_users;
+      document.getElementById('totalModels').textContent = data.summary.unique_models;
+    } else {
+      summaryCards.style.display = 'none';
+    }
+    
+    // Update table with monthly statistics
+    const tbody = document.getElementById('statisticsTableBody');
+    
+    if (data.user_statistics && data.user_statistics.length > 0) {
+      tbody.innerHTML = data.user_statistics.map(user => `
+        <tr class="hover:bg-gray-50 dark:hover:bg-gray-800">
+          <td class="px-6 py-4 whitespace-nowrap">
+            <div>
+              <div class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(user.user_name)}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400">${escapeHtml(user.user_email)}</div>
+            </div>
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+            <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full ${isCurrentMonth ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' : 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200'}">
+              ${user.credits_used.toFixed(2)}
+            </span>
+          </td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.transactions_count}</td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.models_used ? (typeof user.models_used === 'string' ? JSON.parse(user.models_used).length : user.models_used.length) : 0}</td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.current_balance ? user.current_balance.toFixed(2) : 'N/A'}</td>
+        </tr>
+      `).join('');
+    } else {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="text-center py-8 text-gray-500 dark:text-gray-400">
+            No statistics data for ${monthName} ${year}
+          </td>
+        </tr>
+      `;
+    }
+    
+  } catch (err) {
+    notifications.error(`Error loading monthly data: ${err.message}`);
+  }
+}
+
+async function renderYearlyStatsView() {
+  const mainContent = document.getElementById('mainContent');
+  mainContent.innerHTML = '<p class="text-center">Loading yearly statistics...</p>';
+
+  try {
+    const currentYear = new Date().getFullYear();
+    const res = await authenticatedFetch(`/api/credits/statistics/yearly?year=${currentYear}`);
+    const data = await res.json();
+
+    mainContent.innerHTML = `
+      <div class="space-y-6">
+        <div class="flex justify-between items-center">
+          <h1 class="text-2xl font-bold">📊 Yearly Statistics</h1>
+          <div class="flex space-x-2">
+            <select id="yearSelect" onchange="loadYearlyData()" class="px-3 py-2 border rounded-md bg-white dark:bg-gray-800">
+              ${Array.from({length: 5}, (_, i) => currentYear - i).map(year => 
+                `<option value="${year}" ${year === currentYear ? 'selected' : ''}>${year}</option>`
+              ).join('')}
+            </select>
+          </div>
+        </div>
+
+        <div id="yearlyStatsContent">
+          <!-- Yearly Summary -->
+          ${data.yearly_summary ? `
+            <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+              <h2 class="text-xl font-semibold mb-4">📅 ${data.year} Summary</h2>
+              <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                  <div class="text-sm font-medium text-green-800 dark:text-green-200">Total Credits Used</div>
+                  <div class="text-3xl font-bold text-green-600 dark:text-green-400">${data.yearly_summary.total_credits_used.toFixed(2)}</div>
+                </div>
+                <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                  <div class="text-sm font-medium text-blue-800 dark:text-blue-200">Total Transactions</div>
+                  <div class="text-3xl font-bold text-blue-600 dark:text-blue-400">${data.yearly_summary.total_transactions}</div>
+                </div>
+                <div class="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-4">
+                  <div class="text-sm font-medium text-purple-800 dark:text-purple-200">Active Users</div>
+                  <div class="text-3xl font-bold text-purple-600 dark:text-purple-400">${data.yearly_summary.unique_users}</div>
+                </div>
+                <div class="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-4">
+                  <div class="text-sm font-medium text-orange-800 dark:text-orange-200">Models Used</div>
+                  <div class="text-3xl font-bold text-orange-600 dark:text-orange-400">${data.yearly_summary.unique_models}</div>
+                </div>
+              </div>
+            </div>
+          ` : `<div class="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+            <p class="text-gray-500 dark:text-gray-400">No data available for ${data.year}</p>
+          </div>`}
+
+          <!-- Monthly Breakdown -->
+          <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
+            <h2 class="text-xl font-semibold mb-4">📊 Monthly Breakdown for ${data.year}</h2>
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <thead class="bg-gray-50 dark:bg-gray-800">
+                  <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Month</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Credits Used</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Transactions</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Active Users</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Models Used</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+                  ${data.monthly_breakdown.map(month => {
+                    const hasData = month.summary && month.summary.total_transactions > 0;
+                    const rowClass = hasData ? 'hover:bg-gray-50 dark:hover:bg-gray-800' : 'opacity-50';
+                    return `
+                      <tr class="${rowClass}">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                          ${month.month_name}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                          ${hasData ? month.summary.total_credits_used.toFixed(2) : '0.00'}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                          ${hasData ? month.summary.total_transactions : '0'}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                          ${hasData ? month.summary.unique_users : '0'}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                          ${hasData ? month.summary.unique_models : '0'}
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+  } catch (err) {
+    mainContent.innerHTML = `<p class="text-red-500">Error loading yearly statistics: ${err.message}</p>`;
+  }
+}
+
+async function loadYearlyData() {
+  const select = document.getElementById('yearSelect');
+  const year = parseInt(select.value);
+  
+  if (!year) {
+    notifications.warning('Please select a year');
+    return;
+  }
+
+  const contentContainer = document.getElementById('yearlyStatsContent');
+  if (!contentContainer) {
+    notifications.error('Content container not found');
+    return;
+  }
+
+  // Show loading state
+  contentContainer.innerHTML = '<p class="text-center text-gray-500">Loading data for ' + year + '...</p>';
+
+  try {
+    const res = await authenticatedFetch(`/api/credits/statistics/yearly?year=${year}`);
+    const data = await res.json();
+
+    contentContainer.innerHTML = `
+      <!-- Yearly Summary -->
+      ${data.yearly_summary ? `
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+          <h2 class="text-xl font-semibold mb-4">📅 ${data.year} Summary</h2>
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+              <div class="text-sm font-medium text-green-800 dark:text-green-200">Total Credits Used</div>
+              <div class="text-3xl font-bold text-green-600 dark:text-green-400">${data.yearly_summary.total_credits_used.toFixed(2)}</div>
+            </div>
+            <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <div class="text-sm font-medium text-blue-800 dark:text-blue-200">Total Transactions</div>
+              <div class="text-3xl font-bold text-blue-600 dark:text-blue-400">${data.yearly_summary.total_transactions}</div>
+            </div>
+            <div class="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-4">
+              <div class="text-sm font-medium text-purple-800 dark:text-purple-200">Active Users</div>
+              <div class="text-3xl font-bold text-purple-600 dark:text-purple-400">${data.yearly_summary.unique_users}</div>
+            </div>
+            <div class="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg p-4">
+              <div class="text-sm font-medium text-orange-800 dark:text-orange-200">Models Used</div>
+              <div class="text-3xl font-bold text-orange-600 dark:text-orange-400">${data.yearly_summary.unique_models}</div>
+            </div>
+          </div>
+        </div>
+      ` : `<div class="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 mb-6">
+        <p class="text-gray-500 dark:text-gray-400">No data available for ${data.year}</p>
+      </div>`}
+
+      <!-- Monthly Breakdown -->
+      <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
+        <h2 class="text-xl font-semibold mb-4">📊 Monthly Breakdown for ${data.year}</h2>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead class="bg-gray-50 dark:bg-gray-800">
+              <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Month</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Credits Used</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Transactions</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Active Users</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Models Used</th>
+              </tr>
+            </thead>
+            <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+              ${data.monthly_breakdown.map(month => {
+                const hasData = month.summary && month.summary.total_transactions > 0;
+                const rowClass = hasData ? 'hover:bg-gray-50 dark:hover:bg-gray-800' : 'opacity-50';
+                return `
+                  <tr class="${rowClass}">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
+                      ${month.month_name}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                      ${hasData ? month.summary.total_credits_used.toFixed(2) : '0.00'}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                      ${hasData ? month.summary.total_transactions : '0'}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                      ${hasData ? month.summary.unique_users : '0'}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+                      ${hasData ? month.summary.unique_models : '0'}
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+    
+  } catch (err) {
+    contentContainer.innerHTML = `<p class="text-red-500">Error loading yearly data for ${year}: ${err.message}</p>`;
+    notifications.error(`Error loading yearly data: ${err.message}`);
+  }
+}
+
+function getMonthName(month) {
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  return months[month - 1] || 'Unknown';
 }

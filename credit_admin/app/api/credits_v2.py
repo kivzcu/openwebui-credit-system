@@ -580,4 +580,134 @@ async def manual_sync_all(current_user: User = Depends(get_current_admin_user)):
     except Exception as e:
         return {"status": "error", "message": f"Full sync failed: {str(e)}"}
 
+# Statistics endpoints
+@router.get("/api/credits/statistics/user/{user_id}", tags=["statistics"])
+async def get_user_statistics(user_id: str, current_user: User = Depends(get_current_admin_user)):
+    """Get usage statistics for a specific user"""
+    # Get historical statistics
+    statistics = db.get_user_usage_statistics(user_id)
+    
+    # Get current month pending usage
+    current_usage = db.get_current_month_pending_usage(user_id)
+    
+    # Get user info from OpenWebUI
+    user_info = db.get_user_credits(user_id)
+    openwebui_info = db.get_users_info_from_openwebui([user_id])
+    user_details = openwebui_info.get(user_id, {})
+    
+    return {
+        "user_id": user_id,
+        "user_name": user_details.get("name", "Unknown"),
+        "user_email": user_details.get("email", ""),
+        "current_balance": user_info["balance"] if user_info else 0,
+        "group_name": user_info.get("group_name") if user_info else "Unknown",
+        "current_month_usage": current_usage,
+        "historical_statistics": statistics
+    }
 
+@router.get("/api/credits/statistics/monthly", tags=["statistics"])
+async def get_monthly_statistics(
+    year: int = Query(None, description="Year (default: current year)"),
+    month: int = Query(None, description="Month 1-12 (default: current month)"),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """Get monthly usage statistics for all users"""
+    from datetime import datetime, timezone
+    
+    if not year or not month:
+        current_date = datetime.now(timezone.utc)
+        year = year or current_date.year
+        month = month or current_date.month
+    
+    # Get all usage statistics for the month
+    statistics = db.get_all_usage_statistics(year, month)
+    
+    # Get summary
+    summary = db.get_monthly_usage_summary(year, month)
+    
+    # Get user info from OpenWebUI for display names
+    user_ids = [stat["user_id"] for stat in statistics]
+    openwebui_users = db.get_users_info_from_openwebui(user_ids) if user_ids else {}
+    
+    # Enhance statistics with user names
+    for stat in statistics:
+        user_info = openwebui_users.get(stat["user_id"], {})
+        stat["user_name"] = user_info.get("name", "Unknown")
+        stat["user_email"] = user_info.get("email", "")
+    
+    return {
+        "year": year,
+        "month": month,
+        "summary": summary,
+        "user_statistics": statistics
+    }
+
+@router.get("/api/credits/statistics/current-usage", tags=["statistics"])
+async def get_current_month_usage(current_user: User = Depends(get_current_admin_user)):
+    """Get current month usage for all users (pending statistics)"""
+    from datetime import datetime, timezone
+    
+    current_date = datetime.now(timezone.utc)
+    year = current_date.year
+    month = current_date.month
+    
+    # Get all users
+    users = db.get_all_users_with_credits()
+    
+    # Get current usage for each user
+    current_usage = []
+    for user in users:
+        usage = db.get_current_month_pending_usage(user["id"])
+        
+        # Get user info
+        openwebui_info = db.get_users_info_from_openwebui([user["id"]])
+        user_details = openwebui_info.get(user["id"], {})
+        
+        current_usage.append({
+            "user_id": user["id"],
+            "user_name": user_details.get("name", "Unknown"),
+            "user_email": user_details.get("email", ""),
+            "current_balance": user["balance"],
+            "group_name": user.get("group_name", "Unknown"),
+            "usage": usage
+        })
+    
+    # Sort by credits used (descending)
+    current_usage.sort(key=lambda x: x["usage"]["credits_used"], reverse=True)
+    
+    return {
+        "year": year,
+        "month": month,
+        "current_usage": current_usage
+    }
+
+@router.get("/api/credits/statistics/yearly", tags=["statistics"])
+async def get_yearly_statistics(
+    year: int = Query(None, description="Year (default: current year)"),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """Get yearly usage statistics for all users"""
+    from datetime import datetime, timezone
+    
+    if not year:
+        current_date = datetime.now(timezone.utc)
+        year = current_date.year
+    
+    # Get yearly summary
+    yearly_summary = db.get_yearly_usage_summary(year)
+    
+    # Get monthly breakdown for the year
+    monthly_breakdown = []
+    for month in range(1, 13):
+        month_summary = db.get_monthly_usage_summary(year, month)
+        monthly_breakdown.append({
+            "month": month,
+            "month_name": datetime(year, month, 1).strftime("%B"),
+            "summary": month_summary
+        })
+    
+    return {
+        "year": year,
+        "yearly_summary": yearly_summary,
+        "monthly_breakdown": monthly_breakdown
+    }

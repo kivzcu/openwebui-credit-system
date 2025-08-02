@@ -1,6 +1,7 @@
 import os
 import asyncio
 import ssl
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -47,11 +48,103 @@ class OpenWebUIDBWatcher(FileSystemEventHandler):
 
 # Global observer instance
 db_observer = None
+reset_task = None  # Global background task for reset checking
+
+# Configure logging for reset operations
+reset_logger = logging.getLogger('credit_reset')
+reset_logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [RESET] %(message)s'))
+reset_logger.addHandler(handler)
+
+async def periodic_reset_checker():
+    """Background task that periodically checks for needed monthly resets"""
+    reset_logger.info("🔄 Starting periodic credit reset checker...")
+    
+    while True:
+        try:
+            # Check every hour (3600 seconds)
+            await asyncio.sleep(3600)
+            
+            reset_logger.info("🔍 Checking if monthly reset is needed...")
+            
+            if db.needs_monthly_reset():
+                reset_logger.info("📊 Monthly reset is needed - performing reset...")
+                
+                result = db.perform_monthly_reset()
+                
+                if result['success']:
+                    reset_logger.info(f"✅ Monthly reset completed successfully!")
+                    reset_logger.info(f"   Users affected: {result['users_affected']}")
+                    reset_logger.info(f"   Total credits reset: {result['total_credits_reset']:.2f}")
+                    reset_logger.info(f"   Reset date: {result['reset_date']}")
+                    
+                    # Log to system log as well
+                    db.log_action(
+                        log_type="scheduled_reset",
+                        actor="background_task",
+                        message=f"Automated monthly reset completed - {result['users_affected']} users affected",
+                        metadata=result
+                    )
+                    
+                else:
+                    reset_logger.error(f"❌ Monthly reset failed: {result['message']}")
+                    if 'error' in result:
+                        reset_logger.error(f"   Error details: {result['error']}")
+                        
+            else:
+                reset_logger.info("✅ No reset needed - already performed this month")
+                
+        except asyncio.CancelledError:
+            reset_logger.info("🛑 Periodic reset checker cancelled")
+            break
+        except Exception as e:
+            reset_logger.error(f"❌ Error in periodic reset checker: {e}")
+            # Log error to database if possible
+            try:
+                db.log_action(
+                    log_type="reset_checker_error",
+                    actor="background_task",
+                    message=f"Error in periodic reset checker: {str(e)}",
+                    metadata={"error": str(e)}
+                )
+            except:
+                pass  # If we can't log to DB, at least we have the console log
+
+async def check_reset_on_startup():
+    """Check for needed reset immediately on startup"""
+    try:
+        reset_logger.info("🚀 Performing startup reset check...")
+        
+        if db.needs_monthly_reset():
+            reset_logger.info("📊 Monthly reset needed on startup - performing reset...")
+            
+            result = db.perform_monthly_reset()
+            
+            if result['success']:
+                reset_logger.info(f"✅ Startup reset completed successfully!")
+                reset_logger.info(f"   Users affected: {result['users_affected']}")
+                reset_logger.info(f"   Total credits reset: {result['total_credits_reset']:.2f}")
+                
+                db.log_action(
+                    log_type="startup_reset",
+                    actor="startup_task",
+                    message=f"Startup reset completed - {result['users_affected']} users affected",
+                    metadata=result
+                )
+            else:
+                reset_logger.error(f"❌ Startup reset failed: {result['message']}")
+        else:
+            reset_logger.info("✅ No reset needed on startup")
+            
+    except Exception as e:
+        reset_logger.error(f"❌ Error during startup reset check: {e}")
+
 
 # Async context manager for lifespan events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global db_observer
+    global db_observer, reset_task
     
     # Startup
     print("🚀 Initializing Credit Management System v2.0...")
@@ -68,6 +161,13 @@ async def lifespan(app: FastAPI):
         
         # Sync users and models from OpenWebUI
         await credits_v2.sync_all_from_openwebui()
+        
+        # Perform initial reset check
+        await check_reset_on_startup()
+        
+        # Start periodic reset checker as background task
+        reset_task = asyncio.create_task(periodic_reset_checker())
+        print("🔄 Started periodic reset checker (checks every hour)")
         
         # Start watching OpenWebUI database for changes
         if os.path.exists(DB_FILE):
@@ -89,6 +189,17 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     print("🛑 Shutting down...")
+    
+    # Cancel the reset checker task
+    if reset_task:
+        print("🛑 Stopping periodic reset checker...")
+        reset_task.cancel()
+        try:
+            await reset_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Stop database watcher
     if db_observer:
         print("🛑 Stopping database watcher...")
         db_observer.stop()
@@ -130,6 +241,58 @@ app.add_middleware(
 async def health_check():
     """Public health check endpoint for monitoring"""
     return {"status": "healthy", "service": "credit-management-system", "version": "2.0"}
+
+# Reset status and manual trigger endpoints
+@app.get("/api/reset/status", tags=["reset"])
+async def get_reset_status():
+    """Get the current reset status and history"""
+    try:
+        # Get reset history
+        history = db.get_reset_history(10)
+        
+        # Check if reset is needed
+        needs_reset = db.needs_monthly_reset()
+        
+        # Get last reset info
+        last_reset_date = db.get_last_reset_date('monthly')
+        
+        return {
+            "needs_reset": needs_reset,
+            "last_reset_date": last_reset_date,
+            "reset_history": history,
+            "checker_status": "running" if reset_task and not reset_task.done() else "stopped"
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/api/reset/manual", tags=["reset"])
+async def manual_reset():
+    """Manually trigger a monthly reset"""
+    try:
+        reset_logger.info("🔧 Manual reset triggered via API")
+        
+        result = db.perform_monthly_reset()
+        
+        if result['success']:
+            reset_logger.info(f"✅ Manual reset completed successfully!")
+            db.log_action(
+                log_type="manual_reset",
+                actor="api_user",
+                message=f"Manual reset completed - {result['users_affected']} users affected",
+                metadata=result
+            )
+        
+        return result
+    except Exception as e:
+        error_msg = f"Error during manual reset: {str(e)}"
+        reset_logger.error(f"❌ {error_msg}")
+        return {
+            "success": False,
+            "message": error_msg,
+            "users_affected": 0,
+            "total_credits_reset": 0.0,
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
     import uvicorn

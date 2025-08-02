@@ -133,11 +133,46 @@ class CreditDatabase:
                 VALUES ('token_multiplier', '1000')
             """)
             
+            # Reset tracking table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS credit_reset_tracking (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reset_type TEXT NOT NULL,  -- 'monthly', 'manual', etc.
+                    reset_date DATE NOT NULL,  -- YYYY-MM-DD format
+                    reset_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    users_affected INTEGER NOT NULL DEFAULT 0,
+                    total_credits_reset REAL NOT NULL DEFAULT 0.0,
+                    status TEXT NOT NULL DEFAULT 'completed',  -- 'pending', 'completed', 'failed'
+                    error_message TEXT,
+                    metadata TEXT  -- JSON string for additional data
+                )
+            """)
+            
+            # Monthly usage statistics table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS credit_usage_statistics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL,  -- 1-12
+                    credits_used REAL NOT NULL DEFAULT 0.0,
+                    transactions_count INTEGER NOT NULL DEFAULT 0,
+                    models_used TEXT,  -- JSON array of model IDs used
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, year, month)
+                )
+            """)
+            
             # Indexes for better performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_users_group ON credit_users(group_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON credit_transactions(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_model ON credit_transactions(model_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_type ON credit_logs(log_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_reset_tracking_date ON credit_reset_tracking(reset_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_reset_tracking_type ON credit_reset_tracking(reset_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_user ON credit_usage_statistics(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_date ON credit_usage_statistics(year, month)")
             
             conn.commit()
     
@@ -287,6 +322,11 @@ class CreditDatabase:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (user_id, -deducted, "deduct", reason, actor, new_balance, model_id, prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens))
             conn.commit()
+            
+            # Update usage statistics (only if credits were actually deducted)
+            if deducted > 0:
+                self.update_usage_statistics(user_id, deducted, model_id)
+            
             return deducted, new_balance
     
     # Model operations
@@ -428,8 +468,84 @@ class CreditDatabase:
                 return row['name'] if row['name'] else row['email']
             return None
         except Exception as e:
-            print(f"Error fetching user name from OpenWebUI: {e}")
+            print(f"Error getting monthly usage summary: {e}")
             return None
+    
+    def get_yearly_usage_summary(self, year):
+        """Get yearly usage summary for a given year"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT 
+                        COALESCE(SUM(credits_used), 0) as total_credits_used,
+                        COALESCE(SUM(transactions_count), 0) as total_transactions,
+                        COUNT(DISTINCT user_id) as unique_users,
+                        COUNT(*) as total_entries
+                    FROM credit_usage_statistics 
+                    WHERE year = ?
+                """, (year,))
+                
+                result = cursor.fetchone()
+                if result and result["total_entries"] > 0:
+                    # Count unique models
+                    cursor.execute("""
+                        SELECT models_used 
+                        FROM credit_usage_statistics 
+                        WHERE year = ? AND models_used IS NOT NULL
+                    """, (year,))
+                    
+                    all_models = set()
+                    for row in cursor.fetchall():
+                        try:
+                            models = json.loads(row["models_used"])
+                            all_models.update(models)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    
+                    summary = dict(result)
+                    summary["unique_models"] = len(all_models)
+                    return summary
+                
+                return None
+        except Exception as e:
+            print(f"Error getting yearly usage summary: {e}")
+            return None
+    
+    def insert_dummy_statistics(self, user_id, year, month, credits_used, transactions_count, models_used):
+        """Insert dummy statistics data for testing"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Check if entry already exists
+                cursor.execute("""
+                    SELECT id FROM credit_usage_statistics 
+                    WHERE user_id = ? AND year = ? AND month = ?
+                """, (user_id, year, month))
+                
+                if cursor.fetchone():
+                    # Update existing entry
+                    cursor.execute("""
+                        UPDATE credit_usage_statistics 
+                        SET credits_used = ?, transactions_count = ?, models_used = ?
+                        WHERE user_id = ? AND year = ? AND month = ?
+                    """, (credits_used, transactions_count, json.dumps(models_used), user_id, year, month))
+                else:
+                    # Insert new entry
+                    cursor.execute("""
+                        INSERT INTO credit_usage_statistics 
+                        (user_id, year, month, credits_used, transactions_count, models_used)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (user_id, year, month, credits_used, transactions_count, json.dumps(models_used)))
+                
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"Error inserting dummy statistics: {e}")
+            return False
 
     def get_users_info_from_openwebui(self, user_ids: Optional[List[str]] = None) -> Dict[str, Dict[str, str]]:
         """
@@ -524,6 +640,474 @@ class CreditDatabase:
     def set_token_multiplier(self, multiplier: int) -> bool:
         """Set the token multiplier setting"""
         return self.set_setting('token_multiplier', str(multiplier))
+
+    # Reset tracking methods
+    def record_reset_event(self, reset_type: str, reset_date: str, users_affected: int, 
+                          total_credits_reset: float, status: str = 'completed', 
+                          error_message: Optional[str] = None, metadata: Optional[Dict] = None) -> int:
+        """Record a credit reset event"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO credit_reset_tracking 
+                (reset_type, reset_date, users_affected, total_credits_reset, status, error_message, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                reset_type, 
+                reset_date, 
+                users_affected, 
+                total_credits_reset, 
+                status, 
+                error_message,
+                json.dumps(metadata) if metadata else None
+            ))
+            reset_id = cursor.lastrowid
+            conn.commit()
+            
+            # Also log the event
+            self.log_action(
+                log_type="reset_event",
+                actor="system",
+                message=f"Credit reset {reset_type} for {users_affected} users on {reset_date}",
+                metadata={"reset_id": reset_id, "total_credits": total_credits_reset}
+            )
+            
+            return reset_id or 0  # Ensure we return an int
+
+    def get_last_reset_date(self, reset_type: str = 'monthly') -> Optional[str]:
+        """Get the date of the last successful reset of the specified type"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT reset_date FROM credit_reset_tracking 
+                WHERE reset_type = ? AND status = 'completed'
+                ORDER BY reset_date DESC LIMIT 1
+            """, (reset_type,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def get_reset_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get the history of credit resets"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM credit_reset_tracking 
+                ORDER BY reset_timestamp DESC LIMIT ?
+            """, (limit,))
+            
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                if result['metadata']:
+                    try:
+                        result['metadata'] = json.loads(result['metadata'])
+                    except json.JSONDecodeError:
+                        result['metadata'] = {}
+                results.append(result)
+            return results
+
+    def needs_monthly_reset(self) -> bool:
+        """Check if a monthly reset is needed"""
+        from datetime import datetime, timezone
+        
+        current_date = datetime.now(timezone.utc)
+        current_month_start = current_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
+        last_reset_date = self.get_last_reset_date('monthly')
+        
+        if last_reset_date is None:
+            return True  # No reset recorded yet
+            
+        # Parse the last reset date
+        try:
+            # Parse the date string and make it timezone-aware
+            last_reset = datetime.strptime(last_reset_date, '%Y-%m-%d')
+            # Make timezone-aware for comparison
+            last_reset = last_reset.replace(tzinfo=timezone.utc)
+            last_reset_month_start = last_reset.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            
+            # If the last reset was in a previous month, we need a new reset
+            return last_reset_month_start < current_month_start
+        except ValueError:
+            return True  # If we can't parse the date, assume we need a reset
+
+    def perform_monthly_reset(self) -> Dict[str, Any]:
+        """Perform monthly credit reset for all users"""
+        from datetime import datetime, timezone
+        
+        current_date = datetime.now(timezone.utc)
+        reset_date = current_date.strftime('%Y-%m-%d')
+        
+        # Check if reset is needed
+        if not self.needs_monthly_reset():
+            return {
+                'success': False,
+                'message': 'Monthly reset not needed - already performed this month',
+                'users_affected': 0,
+                'total_credits_reset': 0.0
+            }
+        
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get all users with their group default credits
+                cursor.execute("""
+                    SELECT u.id, u.balance, u.group_id, g.default_credits
+                    FROM credit_users u
+                    LEFT JOIN credit_groups g ON u.group_id = g.id
+                    WHERE g.default_credits IS NOT NULL
+                """)
+                
+                users_to_reset = cursor.fetchall()
+                users_affected = 0
+                total_credits_reset = 0.0
+                
+                for user in users_to_reset:
+                    user_id = user[0]
+                    current_balance = user[1]
+                    group_id = user[2]
+                    default_credits = user[3]
+                    
+                    if default_credits > 0:
+                        # Update user balance
+                        cursor.execute("""
+                            UPDATE credit_users 
+                            SET balance = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        """, (default_credits, user_id))
+                        
+                        # Record transaction
+                        cursor.execute("""
+                            INSERT INTO credit_transactions 
+                            (user_id, amount, transaction_type, reason, actor, balance_after)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (
+                            user_id,
+                            default_credits - current_balance,
+                            'monthly_reset',
+                            f'Monthly reset for group {group_id}',
+                            'system',
+                            default_credits
+                        ))
+                        
+                        users_affected += 1
+                        total_credits_reset += default_credits
+                
+                conn.commit()
+                
+                # Initialize monthly statistics for the new month
+                self.initialize_monthly_statistics_for_reset(current_date.year, current_date.month)
+                
+                # Record the reset event
+                reset_id = self.record_reset_event(
+                    reset_type='monthly',
+                    reset_date=reset_date,
+                    users_affected=users_affected,
+                    total_credits_reset=total_credits_reset,
+                    status='completed',
+                    metadata={'reset_timestamp': current_date.isoformat()}
+                )
+                
+                return {
+                    'success': True,
+                    'message': f'Monthly reset completed for {users_affected} users',
+                    'users_affected': users_affected,
+                    'total_credits_reset': total_credits_reset,
+                    'reset_id': reset_id,
+                    'reset_date': reset_date
+                }
+                
+        except Exception as e:
+            # Record the failed reset attempt
+            self.record_reset_event(
+                reset_type='monthly',
+                reset_date=reset_date,
+                users_affected=0,
+                total_credits_reset=0.0,
+                status='failed',
+                error_message=str(e)
+            )
+            
+            return {
+                'success': False,
+                'message': f'Monthly reset failed: {str(e)}',
+                'users_affected': 0,
+                'total_credits_reset': 0.0,
+                'error': str(e)
+            }
+
+    # Usage statistics methods
+    def update_usage_statistics(self, user_id: str, amount: float, model_id: Optional[str] = None):
+        """Update monthly usage statistics when credits are deducted"""
+        from datetime import datetime, timezone
+        
+        current_date = datetime.now(timezone.utc)
+        year = current_date.year
+        month = current_date.month
+        
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get current statistics for this user and month
+                cursor.execute("""
+                    SELECT credits_used, transactions_count, models_used 
+                    FROM credit_usage_statistics 
+                    WHERE user_id = ? AND year = ? AND month = ?
+                """, (user_id, year, month))
+                
+                row = cursor.fetchone()
+                
+                if row:
+                    # Update existing record
+                    current_credits = row[0]
+                    current_transactions = row[1]
+                    models_used_json = row[2] or '[]'
+                    
+                    try:
+                        models_used = json.loads(models_used_json)
+                    except json.JSONDecodeError:
+                        models_used = []
+                    
+                    # Add model to list if not already present
+                    if model_id and model_id not in models_used:
+                        models_used.append(model_id)
+                    
+                    cursor.execute("""
+                        UPDATE credit_usage_statistics 
+                        SET credits_used = ?, transactions_count = ?, models_used = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE user_id = ? AND year = ? AND month = ?
+                    """, (
+                        current_credits + amount,
+                        current_transactions + 1,
+                        json.dumps(models_used),
+                        user_id, year, month
+                    ))
+                else:
+                    # Create new record
+                    models_used = [model_id] if model_id else []
+                    cursor.execute("""
+                        INSERT INTO credit_usage_statistics 
+                        (user_id, year, month, credits_used, transactions_count, models_used)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (user_id, year, month, amount, 1, json.dumps(models_used)))
+                
+                conn.commit()
+                
+        except Exception as e:
+            # Log error but don't fail the main transaction
+            self.log_action(
+                log_type="statistics_error",
+                actor="system",
+                message=f"Failed to update usage statistics for user {user_id}: {str(e)}",
+                metadata={"user_id": user_id, "amount": amount, "model_id": model_id}
+            )
+
+    def get_user_usage_statistics(self, user_id: str, limit: int = 12) -> List[Dict[str, Any]]:
+        """Get user's monthly usage statistics"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM credit_usage_statistics 
+                WHERE user_id = ? 
+                ORDER BY year DESC, month DESC 
+                LIMIT ?
+            """, (user_id, limit))
+            
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                if result['models_used']:
+                    try:
+                        result['models_used'] = json.loads(result['models_used'])
+                    except json.JSONDecodeError:
+                        result['models_used'] = []
+                else:
+                    result['models_used'] = []
+                results.append(result)
+            return results
+
+    def get_all_usage_statistics(self, year: Optional[int] = None, month: Optional[int] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get usage statistics for all users, optionally filtered by year/month"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            if year and month:
+                cursor.execute("""
+                    SELECT u.*, cu.balance as current_balance, cg.name as group_name
+                    FROM credit_usage_statistics u
+                    LEFT JOIN credit_users cu ON u.user_id = cu.id
+                    LEFT JOIN credit_groups cg ON cu.group_id = cg.id
+                    WHERE u.year = ? AND u.month = ?
+                    ORDER BY u.credits_used DESC
+                    LIMIT ?
+                """, (year, month, limit))
+            elif year:
+                cursor.execute("""
+                    SELECT u.*, cu.balance as current_balance, cg.name as group_name
+                    FROM credit_usage_statistics u
+                    LEFT JOIN credit_users cu ON u.user_id = cu.id
+                    LEFT JOIN credit_groups cg ON cu.group_id = cg.id
+                    WHERE u.year = ?
+                    ORDER BY u.year DESC, u.month DESC, u.credits_used DESC
+                    LIMIT ?
+                """, (year, limit))
+            else:
+                cursor.execute("""
+                    SELECT u.*, cu.balance as current_balance, cg.name as group_name
+                    FROM credit_usage_statistics u
+                    LEFT JOIN credit_users cu ON u.user_id = cu.id
+                    LEFT JOIN credit_groups cg ON cu.group_id = cg.id
+                    ORDER BY u.year DESC, u.month DESC, u.credits_used DESC
+                    LIMIT ?
+                """, (limit,))
+            
+            results = []
+            for row in cursor.fetchall():
+                result = dict(row)
+                if result['models_used']:
+                    try:
+                        result['models_used'] = json.loads(result['models_used'])
+                    except json.JSONDecodeError:
+                        result['models_used'] = []
+                else:
+                    result['models_used'] = []
+                results.append(result)
+            return results
+
+    def get_current_month_pending_usage(self, user_id: str) -> Dict[str, Any]:
+        """Get current month's usage for a user (pending/in-progress)"""
+        from datetime import datetime, timezone
+        
+        current_date = datetime.now(timezone.utc)
+        year = current_date.year
+        month = current_date.month
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM credit_usage_statistics 
+                WHERE user_id = ? AND year = ? AND month = ?
+            """, (user_id, year, month))
+            
+            row = cursor.fetchone()
+            if row:
+                result = dict(row)
+                if result['models_used']:
+                    try:
+                        result['models_used'] = json.loads(result['models_used'])
+                    except json.JSONDecodeError:
+                        result['models_used'] = []
+                else:
+                    result['models_used'] = []
+                return result
+            else:
+                return {
+                    'user_id': user_id,
+                    'year': year,
+                    'month': month,
+                    'credits_used': 0.0,
+                    'transactions_count': 0,
+                    'models_used': []
+                }
+
+    def get_monthly_usage_summary(self, year: Optional[int] = None, month: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Get summary statistics for a specific month"""
+        from datetime import datetime, timezone
+        
+        if not year or not month:
+            current_date = datetime.now(timezone.utc)
+            year = year or current_date.year
+            month = month or current_date.month
+        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # Get aggregated statistics
+                cursor.execute("""
+                    SELECT 
+                        COALESCE(SUM(credits_used), 0) as total_credits_used,
+                        COALESCE(SUM(transactions_count), 0) as total_transactions,
+                        COUNT(DISTINCT user_id) as unique_users,
+                        COUNT(*) as total_entries
+                    FROM credit_usage_statistics 
+                    WHERE year = ? AND month = ?
+                """, (year, month))
+                
+                result = cursor.fetchone()
+                if result and result["total_entries"] > 0:
+                    # Count unique models
+                    cursor.execute("""
+                        SELECT models_used 
+                        FROM credit_usage_statistics 
+                        WHERE year = ? AND month = ? AND models_used IS NOT NULL
+                    """, (year, month))
+                    
+                    all_models = set()
+                    for row in cursor.fetchall():
+                        try:
+                            models = json.loads(row["models_used"])
+                            all_models.update(models)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    
+                    summary = dict(result)
+                    summary["unique_models"] = len(all_models)
+                    return summary
+                
+                return None
+        except Exception as e:
+            print(f"Error getting monthly usage summary: {e}")
+            return None
+
+    def initialize_monthly_statistics_for_reset(self, year: int, month: int):
+        """Initialize statistics for all users when a new month starts (called during reset)"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get all users
+                cursor.execute("SELECT id FROM credit_users")
+                users = cursor.fetchall()
+                
+                created_count = 0
+                for user in users:
+                    user_id = user[0]
+                    
+                    # Check if record already exists
+                    cursor.execute("""
+                        SELECT id FROM credit_usage_statistics 
+                        WHERE user_id = ? AND year = ? AND month = ?
+                    """, (user_id, year, month))
+                    
+                    if not cursor.fetchone():
+                        # Create new record with zero usage
+                        cursor.execute("""
+                            INSERT INTO credit_usage_statistics 
+                            (user_id, year, month, credits_used, transactions_count, models_used)
+                            VALUES (?, ?, ?, 0.0, 0, '[]')
+                        """, (user_id, year, month))
+                        created_count += 1
+                
+                conn.commit()
+                
+                self.log_action(
+                    log_type="statistics_initialization",
+                    actor="system",
+                    message=f"Initialized monthly statistics for {created_count} users for {year}-{month:02d}",
+                    metadata={"year": year, "month": month, "users_initialized": created_count}
+                )
+                
+        except Exception as e:
+            self.log_action(
+                log_type="statistics_error",
+                actor="system",
+                message=f"Failed to initialize monthly statistics: {str(e)}",
+                metadata={"year": year, "month": month, "error": str(e)}
+            )
 
 # Global database instance
 db = CreditDatabase()
