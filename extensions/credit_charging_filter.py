@@ -105,6 +105,8 @@ class Filter:
         if not messages:
             return body
 
+        # print(body)
+
         # The last message is the completion, the rest are the prompt
         completion_message = messages[-1]
 
@@ -114,12 +116,15 @@ class Filter:
             completion_tokens = usage["completion_tokens"]
             self.estimation_warning = ""  # Exact cost, no warning
             actor = "model-usage"
-            
+
             # Extract cached tokens and reasoning tokens
-            cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
-            reasoning_tokens = usage.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
-            
-            print(f"Token details - Cached: {cached_tokens}, Reasoning: {reasoning_tokens}")
+            cached_tokens = usage.get("prompt_tokens_details", {}).get(
+                "cached_tokens", 0
+            )
+            reasoning_tokens = usage.get("completion_tokens_details", {}).get(
+                "reasoning_tokens", 0
+            )
+
         else:
             # Fallback to manual counting if usage is not available
             prompt_messages = messages[:-1]
@@ -178,7 +183,7 @@ class Filter:
 
         # Check if model is free
         is_free = model_data.get("is_free", False)
-        
+
         if is_free:
             # For free models, skip credit deduction
             if self.valves.show_status and __event_emitter__:
