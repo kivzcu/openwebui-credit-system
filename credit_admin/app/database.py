@@ -158,11 +158,19 @@ class CreditDatabase:
                     credits_used REAL NOT NULL DEFAULT 0.0,
                     transactions_count INTEGER NOT NULL DEFAULT 0,
                     models_used TEXT,  -- JSON array of model IDs used
+                    balance_before_reset REAL,  -- Balance at end of month, before next reset
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(user_id, year, month)
                 )
             """)
+            
+            # Add balance_before_reset column if it doesn't exist (migration)
+            try:
+                cursor.execute("ALTER TABLE credit_usage_statistics ADD COLUMN balance_before_reset REAL")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
             
             # Indexes for better performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_users_group ON credit_users(group_id)")
@@ -514,7 +522,7 @@ class CreditDatabase:
             print(f"Error getting yearly usage summary: {e}")
             return None
     
-    def insert_dummy_statistics(self, user_id, year, month, credits_used, transactions_count, models_used):
+    def insert_dummy_statistics(self, user_id, year, month, credits_used, transactions_count, models_used, balance_before_reset=None):
         """Insert dummy statistics data for testing"""
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -530,21 +538,60 @@ class CreditDatabase:
                     # Update existing entry
                     cursor.execute("""
                         UPDATE credit_usage_statistics 
-                        SET credits_used = ?, transactions_count = ?, models_used = ?
+                        SET credits_used = ?, transactions_count = ?, models_used = ?, balance_before_reset = ?
                         WHERE user_id = ? AND year = ? AND month = ?
-                    """, (credits_used, transactions_count, json.dumps(models_used), user_id, year, month))
+                    """, (credits_used, transactions_count, json.dumps(models_used), balance_before_reset, user_id, year, month))
                 else:
                     # Insert new entry
                     cursor.execute("""
                         INSERT INTO credit_usage_statistics 
-                        (user_id, year, month, credits_used, transactions_count, models_used)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (user_id, year, month, credits_used, transactions_count, json.dumps(models_used)))
+                        (user_id, year, month, credits_used, transactions_count, models_used, balance_before_reset)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (user_id, year, month, credits_used, transactions_count, json.dumps(models_used), balance_before_reset))
                 
                 conn.commit()
                 return True
         except Exception as e:
             print(f"Error inserting dummy statistics: {e}")
+            return False
+    
+    def update_july_balance_before_reset(self):
+        """Update July 2025 statistics with calculated balance_before_reset values"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get all July 2025 statistics entries
+                cursor.execute("""
+                    SELECT user_id, credits_used FROM credit_usage_statistics
+                    WHERE year = 2025 AND month = 7
+                """)
+                july_stats = cursor.fetchall()
+                
+                updated_count = 0
+                
+                for user_id, credits_used in july_stats:
+                    # For dummy data, we'll assume they started with 900 credits (default group)
+                    # and calculate what their balance would have been at end of July
+                    starting_balance = 900.0  # Default credits for most users
+                    balance_before_reset = max(0, starting_balance - credits_used)
+                    
+                    # Update the record
+                    cursor.execute("""
+                        UPDATE credit_usage_statistics 
+                        SET balance_before_reset = ?
+                        WHERE user_id = ? AND year = 2025 AND month = 7
+                    """, (balance_before_reset, user_id))
+                    
+                    updated_count += 1
+                    print(f"Updated {user_id}: used {credits_used:.2f}, balance before reset: {balance_before_reset:.2f}")
+                
+                conn.commit()
+                print(f"\n✅ Updated {updated_count} July 2025 records with balance_before_reset")
+                return True
+                
+        except Exception as e:
+            print(f"❌ Error updating July balance_before_reset: {e}")
             return False
 
     def get_users_info_from_openwebui(self, user_ids: Optional[List[str]] = None) -> Dict[str, Dict[str, str]]:
@@ -763,11 +810,25 @@ class CreditDatabase:
                 users_affected = 0
                 total_credits_reset = 0.0
                 
+                # Store pre-reset balances for previous month statistics
+                previous_month = current_date.month - 1
+                previous_year = current_date.year
+                if previous_month <= 0:
+                    previous_month = 12
+                    previous_year -= 1
+                
                 for user in users_to_reset:
                     user_id = user[0]
                     current_balance = user[1]
                     group_id = user[2]
                     default_credits = user[3]
+                    
+                    # Update previous month's statistics with final balance before reset
+                    cursor.execute("""
+                        UPDATE credit_usage_statistics 
+                        SET balance_before_reset = ?
+                        WHERE user_id = ? AND year = ? AND month = ?
+                    """, (current_balance, user_id, previous_year, previous_month))
                     
                     if default_credits > 0:
                         # Update user balance

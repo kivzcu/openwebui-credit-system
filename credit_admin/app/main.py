@@ -53,9 +53,12 @@ reset_task = None  # Global background task for reset checking
 # Configure logging for reset operations
 reset_logger = logging.getLogger('credit_reset')
 reset_logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [RESET] %(message)s'))
-reset_logger.addHandler(handler)
+
+# Only add handler if none exist (prevents duplicate handlers on reload)
+if not reset_logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [RESET] %(message)s'))
+    reset_logger.addHandler(handler)
 
 async def periodic_reset_checker():
     """Background task that periodically checks for needed monthly resets"""

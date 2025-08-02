@@ -1834,6 +1834,17 @@ async function loadMonthlyData() {
       
       // Update table with current usage data
       const tbody = document.getElementById('statisticsTableBody');
+      
+      // Update table header for current month (show Current Balance, not Balance Before Reset)
+      const tableHeader = document.querySelector('#statisticsTableBody').closest('table').querySelector('thead tr');
+      tableHeader.innerHTML = `
+        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">User</th>
+        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Credits Used</th>
+        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Transactions</th>
+        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Models Used</th>
+        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Current Balance</th>
+      `;
+      
       tbody.innerHTML = currentData.current_usage.map(user => `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-800">
           <td class="px-6 py-4 whitespace-nowrap">
@@ -1917,6 +1928,16 @@ async function loadMonthlyData() {
     // Update table with monthly statistics
     const tbody = document.getElementById('statisticsTableBody');
     
+    // Update table header for historical month (show Balance Before Reset, not Current Balance)
+    const tableHeader = document.querySelector('#statisticsTableBody').closest('table').querySelector('thead tr');
+    tableHeader.innerHTML = `
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">User</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Credits Used</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Transactions</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Models Used</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Balance Before Reset</th>
+    `;
+    
     if (data.user_statistics && data.user_statistics.length > 0) {
       tbody.innerHTML = data.user_statistics.map(user => `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-800">
@@ -1933,7 +1954,14 @@ async function loadMonthlyData() {
           </td>
           <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.transactions_count}</td>
           <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.models_used ? (typeof user.models_used === 'string' ? JSON.parse(user.models_used).length : user.models_used.length) : 0}</td>
-          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">${user.current_balance ? user.current_balance.toFixed(2) : 'N/A'}</td>
+          <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+            ${user.balance_before_reset !== null && user.balance_before_reset !== undefined ? 
+              `<span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                ${user.balance_before_reset.toFixed(2)}
+              </span>` : 
+              '<span class="text-gray-500 dark:text-gray-400 italic">N/A</span>'
+            }
+          </td>
         </tr>
       `).join('');
     } else {
