@@ -735,8 +735,9 @@ function updateLegendHighlight(activeFilter) {
 
 async function renderUsersView() {
   const container = document.getElementById('mainContent');
-  container.innerHTML = '<h2 class="text-2xl font-bold mb-4">User Credit Management</h2>';
-  container.innerHTML = `
+  
+  // Build the complete HTML string
+  let completeHtml = `
   <div class="flex items-center justify-between mb-4">
     <h2 class="text-2xl font-bold">User Credit Management</h2>
     <div class="flex items-center border border-gray-300 dark:border-gray-700 rounded-xl px-2 py-1 w-64 bg-white dark:bg-gray-900">
@@ -790,8 +791,8 @@ async function renderUsersView() {
     }
 
     table += '</tbody></table>';
-container.innerHTML += table;
-container.innerHTML += `
+    
+    const buttonsHtml = `
   <div class="flex gap-2 mt-4">
     <button type="button" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 export-users-btn">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
@@ -807,13 +808,19 @@ container.innerHTML += `
     </button>
   </div>`;
 
+    // Set the complete HTML at once (this replaces all content)
+    completeHtml += table + buttonsHtml;
+
   } catch (err) {
     if (err instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    container.innerHTML += `<p class="text-red-500">Error loading users: ${escapeHtml(err.message)}</p>`;
+    completeHtml += `<p class="text-red-500">Error loading users: ${escapeHtml(err.message)}</p>`;
   }
+  
+  // Replace entire content at once
+  container.innerHTML = completeHtml;
 }
 
 function editUser(userId) {
@@ -1184,7 +1191,9 @@ async function saveGroupCredits(groupId, modal) {
 
 async function renderModelsView() {
   const container = document.getElementById('mainContent');
-  container.innerHTML = `
+  
+  // Build the complete HTML string
+  let completeHtml = `
   <div class="flex items-center justify-between mb-4">
     <h2 class="text-2xl font-bold">Model Pricing Management</h2>
     <div class="flex items-center gap-4">
@@ -1213,7 +1222,6 @@ async function renderModelsView() {
       </div>
     </div>
   </div>`;
-
 
   try {
     // Fetch both models and settings to get the token multiplier
@@ -1313,7 +1321,7 @@ async function renderModelsView() {
     const unavailableCount = currentModels.length - availableCount;
     const freeCount = currentModels.filter(m => m.is_free === true || m.is_free === 1).length;
 
-    container.innerHTML += `
+    const summaryHtml = `
       <div class="flex items-center gap-4 mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
         <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="available" title="Click to show only available models">
           <span class="w-3 h-3 bg-green-400 rounded-full"></span>
@@ -1333,8 +1341,7 @@ async function renderModelsView() {
       </div>
     `;
 
-container.innerHTML += table;
-container.innerHTML += `
+    const buttonsHtml = `
   <div class="flex gap-2 mt-4">
     <button type="button" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 export-models-btn">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
@@ -1350,13 +1357,19 @@ container.innerHTML += `
     </button>
   </div>`;
 
+    // Set the complete HTML at once (this replaces all content)
+    completeHtml += summaryHtml + table + buttonsHtml;
+
   } catch (err) {
     if (err instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    container.innerHTML += `<p class="text-red-500">Error loading models: ${escapeHtml(err.message)}</p>`;
+    completeHtml += `<p class="text-red-500">Error loading models: ${escapeHtml(err.message)}</p>`;
   }
+  
+  // Replace entire content at once
+  container.innerHTML = completeHtml;
 }
 
 async function editModel(modelId) {
