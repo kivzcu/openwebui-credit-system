@@ -778,7 +778,7 @@ async function renderUsersView() {
 
     for (const user of currentUsers) {
       table += `
-        <tr class="bg-white dark:bg-gray-900 border-t">
+        <tr class="bg-white dark:bg-gray-900 border-t cursor-pointer">
           <td class="px-3 py-1 text-xs font-bold text-blue-600 dark:text-blue-300">${escapeHtml(user.role)}</td>
           <td class="px-3 py-1">${escapeHtml(user.name)}</td>
           <td class="px-3 py-1">${escapeHtml(user.email)}</td>
@@ -842,8 +842,18 @@ function editUser(userId) {
   modalRoot.appendChild(modal);
   
   // Add event listeners
-  modal.querySelector('.close-btn').addEventListener('click', () => modal.remove());
-  modal.querySelector('.cancel-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('.close-btn').addEventListener('click', () => {
+    modal.remove();
+    // Flash red to indicate cancellation
+    const row = findRowByDataAttribute('data-user-id', userId);
+    flashRowError(row);
+  });
+  modal.querySelector('.cancel-btn').addEventListener('click', () => {
+    modal.remove();
+    // Flash red to indicate cancellation
+    const row = findRowByDataAttribute('data-user-id', userId);
+    flashRowError(row);
+  });
   modal.querySelector('.save-btn').addEventListener('click', () => saveUserCredits(userId, modal));
 }
 
@@ -899,6 +909,9 @@ async function saveUserCredits(userId, modal) {
 
   if (isNaN(newCredits) || newCredits < 0) {
     notifications.error('Please enter a valid credit amount');
+    // Flash the modal input field or find the row and flash error
+    const row = findRowByDataAttribute('data-user-id', userId);
+    flashRowError(row);
     return;
   }
 
@@ -912,13 +925,26 @@ async function saveUserCredits(userId, modal) {
     if (result.status === 'success') {
       notifications.success(`Credits successfully updated to ${newCredits}`);
       if (modal) modal.remove();
-      renderUsersView();
+      
+      // Find the row and flash success, then update in place
+      const row = findRowByDataAttribute('data-user-id', userId);
+      if (row) {
+        flashRowSuccess(row);
+        // Update the row data in place instead of reloading the entire table
+        updateUserRowInPlace(userId, newCredits);
+      } else {
+        renderUsersView(); // Fallback if row not found
+      }
     } else {
       notifications.error(result.message || 'Error saving credits');
+      const row = findRowByDataAttribute('data-user-id', userId);
+      flashRowError(row);
     }
   } catch (err) {
     if (err instanceof AuthenticationError) return;
     notifications.error(`Error saving credits: ${err.message}`);
+    const row = findRowByDataAttribute('data-user-id', userId);
+    flashRowError(row);
   }
 }
 
@@ -1038,7 +1064,7 @@ async function renderGroupsView() {
 
     for (const group of currentGroups) {
       table += `
-        <tr class="bg-white dark:bg-gray-900 border-t">
+        <tr class="bg-white dark:bg-gray-900 border-t hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer">
           <td class="px-3 py-1">${escapeHtml(group.name)}</td>
           <td class="px-3 py-1">${group.default_credits}</td>
           <td class="px-3 py-1 text-right">
@@ -1092,8 +1118,18 @@ function editGroup(groupId) {
   modalRoot.appendChild(modal);
   
   // Add event listeners
-  modal.querySelector('.close-btn').addEventListener('click', () => modal.remove());
-  modal.querySelector('.cancel-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('.close-btn').addEventListener('click', () => {
+    modal.remove();
+    // Flash red to indicate cancellation
+    const row = findRowByDataAttribute('data-group-id', groupId);
+    flashRowError(row);
+  });
+  modal.querySelector('.cancel-btn').addEventListener('click', () => {
+    modal.remove();
+    // Flash red to indicate cancellation
+    const row = findRowByDataAttribute('data-group-id', groupId);
+    flashRowError(row);
+  });
   modal.querySelector('.save-btn').addEventListener('click', () => saveGroupCredits(groupId, modal));
 }
 
@@ -1103,6 +1139,9 @@ async function saveGroupCredits(groupId, modal) {
   
   if (isNaN(newCredits) || newCredits < 0) {
     notifications.error('Please enter a valid credit amount');
+    // Flash error on the row
+    const row = findRowByDataAttribute('data-group-id', groupId);
+    flashRowError(row);
     return;
   }
   
@@ -1120,13 +1159,26 @@ async function saveGroupCredits(groupId, modal) {
     if (result.status === 'success') {
       notifications.success(`Group credits successfully set to ${newCredits}`);
       if (modal) modal.remove();
-      renderGroupsView();
+      
+      // Find the row and flash success, then update in place
+      const row = findRowByDataAttribute('data-group-id', groupId);
+      if (row) {
+        flashRowSuccess(row);
+        // Update the row data in place instead of reloading the entire table
+        updateGroupRowInPlace(groupId, newCredits);
+      } else {
+        renderGroupsView(); // Fallback if row not found
+      }
     } else {
       notifications.error(result.message || 'Error saving group credits');
+      const row = findRowByDataAttribute('data-group-id', groupId);
+      flashRowError(row);
     }
   } catch (err) {
     if (err instanceof AuthenticationError) return;
     notifications.error(`Error saving group credits: ${err.message}`);
+    const row = findRowByDataAttribute('data-group-id', groupId);
+    flashRowError(row);
   }
 }
 
@@ -1199,7 +1251,7 @@ async function renderModelsView() {
     for (const model of currentModels) {
       const isAvailable = model.is_available === true || model.is_available === 1;
       
-      const rowClass = 'bg-white dark:bg-gray-900 border-t';
+      const rowClass = 'bg-white dark:bg-gray-900 border-t cursor-pointer';
       
       const nameClass = '';
       const priceClass = '';
@@ -1392,8 +1444,18 @@ async function editModel(modelId) {
   modalRoot.appendChild(modal);
   
   // Add event listeners
-  modal.querySelector('.close-btn').addEventListener('click', () => modal.remove());
-  modal.querySelector('.cancel-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('.close-btn').addEventListener('click', () => {
+    modal.remove();
+    // Flash red to indicate cancellation
+    const row = findRowByDataAttribute('data-model-id', modelId);
+    flashRowError(row);
+  });
+  modal.querySelector('.cancel-btn').addEventListener('click', () => {
+    modal.remove();
+    // Flash red to indicate cancellation
+    const row = findRowByDataAttribute('data-model-id', modelId);
+    flashRowError(row);
+  });
   modal.querySelector('.save-btn').addEventListener('click', () => saveModelPricing(modelId, modal));
   modal.querySelector('#freeModelCheckbox').addEventListener('change', toggleFreeModel);
   modal.querySelectorAll('.pricing-mode-btn').forEach(btn => {
@@ -1539,6 +1601,9 @@ async function saveModelPricing(modelId, modal) {
   if (!isFree && (isNaN(displayContextPrice) || isNaN(displayGenerationPrice) || 
                   displayContextPrice < 0 || displayGenerationPrice < 0)) {
     notifications.error('Please enter valid prices');
+    // Flash error on the row
+    const row = findRowByDataAttribute('data-model-id', modelId);
+    flashRowError(row);
     return;
   }
 
@@ -1578,13 +1643,30 @@ async function saveModelPricing(modelId, modal) {
     if (result.status === 'success') {
       notifications.success('Model pricing successfully updated.');
       if (modal) modal.remove();
-      renderModelsView();
+      
+      // Find the row and flash success, then update in place with delay
+      const row = findRowByDataAttribute('data-model-id', modelId);
+      if (row) {
+        flashRowSuccess(row);
+        // Update the model data and refresh after flash completes
+        updateModelRowInPlace(modelId, {
+          context_price: contextPrice,
+          generation_price: generationPrice,
+          is_free: isFree
+        });
+      } else {
+        renderModelsView(); // Fallback if row not found
+      }
     } else {
       notifications.error(result.message || 'Error saving model pricing');
+      const row = findRowByDataAttribute('data-model-id', modelId);
+      flashRowError(row);
     }
   } catch (err) {
     if (err instanceof AuthenticationError) return;
     notifications.error(`Error saving model pricing: ${err.message}`);
+    const row = findRowByDataAttribute('data-model-id', modelId);
+    flashRowError(row);
   }
 }
 
@@ -1628,7 +1710,7 @@ async function renderSystemLogsView() {
     for (const log of logs) {
       const timestamp = new Date(log.created_at).toLocaleString();
       table += `
-        <tr class="bg-white dark:bg-gray-900 border-t">
+        <tr class="bg-white dark:bg-gray-900 border-t hover:bg-gray-50 dark:hover:bg-gray-800">
           <td class="px-3 py-1 text-xs">${escapeHtml(timestamp)}</td>
           <td class="px-3 py-1 text-xs font-mono">${escapeHtml(log.log_type)}</td>
           <td class="px-3 py-1 text-xs">${escapeHtml(log.actor)}</td>
@@ -1735,7 +1817,7 @@ async function renderTransactionLogsView() {
       }
       
       table += `
-        <tr class="bg-white dark:bg-gray-900 border-t">
+        <tr class="bg-white dark:bg-gray-900 border-t hover:bg-gray-50 dark:hover:bg-gray-800">
           <td class="px-3 py-1 text-xs">${escapeHtml(timestamp)}</td>
           <td class="px-3 py-1 text-xs">${userDisplay}</td>
           <td class="px-3 py-1 text-xs ${amountClass}">${transaction.amount > 0 ? '+' : ''}${transaction.amount}</td>
@@ -2439,3 +2521,222 @@ function getMonthName(month) {
   ];
   return months[month - 1] || 'Unknown';
 }
+
+// Enhanced row hover functionality for better UX
+function enhanceTableRowHover() {
+  // Add hover effects to editable table rows
+  document.addEventListener('mouseover', (e) => {
+    const row = e.target.closest('tr.cursor-pointer');
+    if (row) {
+      // Find edit button in this row and enhance it
+      const editButton = row.querySelector('button[class*="edit-"][class*="-btn"]');
+      if (editButton) {
+        editButton.classList.add('ring-2', 'ring-blue-300', 'dark:ring-blue-600');
+      }
+    }
+  });
+
+  document.addEventListener('mouseout', (e) => {
+    const row = e.target.closest('tr.cursor-pointer');
+    if (row) {
+      // Remove enhancement from edit button
+      const editButton = row.querySelector('button[class*="edit-"][class*="-btn"]');
+      if (editButton) {
+        editButton.classList.remove('ring-2', 'ring-blue-300', 'dark:ring-blue-600');
+      }
+    }
+  });
+}
+
+// Visual feedback functions for row actions
+function flashRowSuccess(rowElement) {
+  if (!rowElement) return;
+  
+  // Remove any existing flash classes
+  rowElement.classList.remove('flash-success', 'flash-error');
+  
+  // Force reflow to ensure class removal takes effect
+  rowElement.offsetHeight;
+  
+  // Add success flash animation
+  rowElement.classList.add('flash-success');
+  
+  // Remove the class after animation completes
+  setTimeout(() => {
+    rowElement.classList.remove('flash-success');
+  }, 2000); // 2 flashes × 1s each
+}
+
+function flashRowError(rowElement) {
+  if (!rowElement) return;
+  
+  // Remove any existing flash classes
+  rowElement.classList.remove('flash-success', 'flash-error');
+  
+  // Force reflow to ensure class removal takes effect
+  rowElement.offsetHeight;
+  
+  // Add error flash animation
+  rowElement.classList.add('flash-error');
+  
+  // Remove the class after animation completes
+  setTimeout(() => {
+    rowElement.classList.remove('flash-error');
+  }, 1000); // 4 flashes × 0.25s each
+}
+
+function findRowByDataAttribute(attributeName, attributeValue) {
+  // Find the table row that contains a button with the specified data attribute
+  const button = document.querySelector(`button[${attributeName}="${attributeValue}"]`);
+  return button ? button.closest('tr') : null;
+}
+
+// Update user row data in place without reloading the table
+function updateUserRowInPlace(userId, newCredits) {
+  const row = findRowByDataAttribute('data-user-id', userId);
+  if (row) {
+    // Update the credits column (4th column, index 3)
+    const creditsCell = row.children[3];
+    if (creditsCell) {
+      creditsCell.textContent = newCredits;
+    }
+    
+    // Update the currentUsers data
+    const userIndex = currentUsers.findIndex(u => u.id === userId);
+    if (userIndex !== -1) {
+      currentUsers[userIndex].credits = newCredits;
+    }
+  }
+}
+
+// Update group row data in place without reloading the table
+function updateGroupRowInPlace(groupId, newCredits) {
+  const row = findRowByDataAttribute('data-group-id', groupId);
+  if (row) {
+    // Update the default credits column (2nd column, index 1)
+    const creditsCell = row.children[1];
+    if (creditsCell) {
+      creditsCell.textContent = newCredits;
+    }
+    
+    // Update the currentGroups data
+    const groupIndex = currentGroups.findIndex(g => g.id === groupId);
+    if (groupIndex !== -1) {
+      currentGroups[groupIndex].default_credits = newCredits;
+    }
+  }
+}
+
+// Update model row data in place without reloading the table
+function updateModelRowInPlace(modelId, updatedModel) {
+  const row = findRowByDataAttribute('data-model-id', modelId);
+  if (row) {
+    // Update the currentModels data
+    const modelIndex = currentModels.findIndex(m => m.id === modelId);
+    if (modelIndex !== -1) {
+      currentModels[modelIndex] = { ...currentModels[modelIndex], ...updatedModel };
+      
+      // Get updated model data for display
+      const model = currentModels[modelIndex];
+      
+      // Fetch current settings for display calculations
+      fetch('/api/credits/settings', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      })
+      .then(res => res.json())
+      .then(settings => {
+        const tokenMultiplier = settings.token_multiplier || 1000;
+        
+        // Helper function to get display unit text
+        const getDisplayUnit = (multiplier) => {
+          if (multiplier === 1) return '1 token';
+          if (multiplier === 1000) return '1K tokens';
+          if (multiplier === 1000000) return '1M tokens';
+          return `${multiplier} tokens`;
+        };
+        
+        const displayUnit = getDisplayUnit(tokenMultiplier);
+        const displayContextPrice = (model.context_price * tokenMultiplier).toFixed(6);
+        const displayGenerationPrice = (model.generation_price * tokenMultiplier).toFixed(6);
+        
+        // Calculate USD prices from the updated credit prices using the conversion ratio
+        const usdToCreditRatio = settings.usd_to_credit_ratio || 1000.0;
+        const displayContextPriceUsd = ((model.context_price * tokenMultiplier) / usdToCreditRatio).toFixed(6);
+        const displayGenerationPriceUsd = ((model.generation_price * tokenMultiplier) / usdToCreditRatio).toFixed(6);
+        
+        const isFree = model.is_free === true || model.is_free === 1;
+        
+        // Update the pricing cells
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 4) {
+          // Context price cell (index 2)
+          const contextPriceDisplay = isFree 
+            ? '<div class="text-xs"><div><strong>FREE</strong></div><div class="text-gray-500">No charge</div></div>'
+            : `<div class="text-xs"><div><strong>${displayContextPrice}</strong> credits</div><div class="text-gray-500">$${displayContextPriceUsd}</div></div>`;
+          cells[2].innerHTML = contextPriceDisplay;
+          
+          // Generation price cell (index 3)
+          const genPriceDisplay = isFree 
+            ? '<div class="text-xs"><div><strong>FREE</strong></div><div class="text-gray-500">No charge</div></div>'
+            : `<div class="text-xs"><div><strong>${displayGenerationPrice}</strong> credits</div><div class="text-gray-500">$${displayGenerationPriceUsd}</div></div>`;
+          cells[3].innerHTML = genPriceDisplay;
+          
+          // Update status cell (index 1) to show free badge if needed
+          const isAvailable = model.is_available === true || model.is_available === 1;
+          let statusBadge;
+          if (isFree) {
+            // For free models, show both availability and free status side by side
+            statusBadge = isAvailable
+              ? '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><span class="w-2 h-2 bg-green-400 rounded-full mr-1.5"></span>Available</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>'
+              : '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"><span class="w-2 h-2 bg-red-400 rounded-full mr-1.5"></span>Unavailable</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>';
+          } else {
+            // For paid models, show only availability
+            statusBadge = isAvailable
+              ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><span class="w-2 h-2 bg-green-400 rounded-full mr-1.5"></span>Available</span>'
+              : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"><span class="w-2 h-2 bg-red-400 rounded-full mr-1.5"></span>Unavailable</span>';
+          }
+          cells[1].innerHTML = statusBadge;
+        }
+      })
+      .catch(err => {
+        console.warn('Could not fetch settings for display update, using defaults:', err);
+        // Fallback to re-render if settings fetch fails
+        setTimeout(() => renderModelsView(), 2000);
+      });
+      
+      // Update legend counts after successful in-place update
+      updateModelLegendCounts();
+    }
+  }
+}
+
+// Function to update model legend counts without full re-render
+function updateModelLegendCounts() {
+  if (!currentModels || currentModels.length === 0) return;
+  
+  const availableCount = currentModels.filter(m => m.is_available === true || m.is_available === 1).length;
+  const unavailableCount = currentModels.length - availableCount;
+  const freeCount = currentModels.filter(m => m.is_free === true || m.is_free === 1).length;
+  
+  // Find and update legend items
+  const legendItems = document.querySelectorAll('.legend-item');
+  legendItems.forEach(item => {
+    const statusAttr = item.getAttribute('data-status');
+    const textElement = item.querySelector('span:last-child');
+    
+    if (textElement) {
+      if (statusAttr === 'available') {
+        textElement.innerHTML = `<strong>${availableCount}</strong> Available Models`;
+      } else if (statusAttr === 'unavailable') {
+        textElement.innerHTML = `<strong>${unavailableCount}</strong> Unavailable Models`;
+      } else if (statusAttr === 'free') {
+        textElement.innerHTML = `<strong>${freeCount}</strong> Free Models`;
+      } else if (statusAttr === 'all') {
+        textElement.innerHTML = `Total: <strong>${currentModels.length}</strong> models`;
+      }
+    }
+  });
+}
+
+// Initialize enhanced hover effects when page loads
+document.addEventListener('DOMContentLoaded', enhanceTableRowHover);
