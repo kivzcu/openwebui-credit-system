@@ -139,6 +139,37 @@ class NotificationManager {
 // Global notification instance
 const notifications = new NotificationManager();
 
+// Security: Clear any credentials from URL immediately
+function clearCredentialsFromURL() {
+  if (window.location.search) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const dangerousParams = ['username', 'password', 'user', 'pass', 'login', 'auth', 'token'];
+    let credentialsFound = false;
+    
+    dangerousParams.forEach(param => {
+      if (urlParams.has(param)) {
+        credentialsFound = true;
+        urlParams.delete(param);
+      }
+    });
+    
+    if (credentialsFound) {
+      // Clear the URL without the dangerous parameters
+      const cleanUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+      window.history.replaceState({}, document.title, cleanUrl);
+      
+      // Show security warning
+      setTimeout(() => {
+        if (window.notifications) {
+          notifications.error('🚨 SECURITY WARNING: Credentials detected in URL and removed. Never share URLs containing login credentials!', 10000);
+        }
+      }, 1000);
+      
+      console.warn('🚨 SECURITY: Credentials were found in URL parameters and have been removed.');
+    }
+  }
+}
+
 // Check authentication on page load
 document.addEventListener('DOMContentLoaded', () => {
   notifications.init(); // Initialize notification system
@@ -161,6 +192,15 @@ function showAdminInterface() {
   document.getElementById('loginForm').classList.add('hidden');
   document.getElementById('adminInterface').classList.remove('hidden');
   
+  // Show security incident warning if this is the first login after fix
+  const securityWarningShown = localStorage.getItem('securityWarningShown');
+  if (!securityWarningShown) {
+    setTimeout(() => {
+      notifications.warning('🚨 SECURITY NOTICE: Security fixes have been applied to prevent credential exposure in URLs. Please review SECURITY_INCIDENT_RESPONSE.md for details.', 15000);
+      localStorage.setItem('securityWarningShown', 'true');
+    }, 2000);
+  }
+  
   // Restore the last viewed page from localStorage, default to 'users'
   const lastViewedPage = localStorage.getItem('lastViewedPage') || 'users';
   selectView(lastViewedPage);
@@ -180,8 +220,21 @@ document.getElementById('loginFormElement').addEventListener('submit', async (e)
   e.preventDefault();
   hideError();
   
+  // Security check: Ensure we're not processing credentials from URL
+  if (window.location.search.includes('username') || window.location.search.includes('password')) {
+    notifications.error('🚨 SECURITY: Credentials in URL detected. Please manually enter your credentials.');
+    clearCredentialsFromURL();
+    return;
+  }
+  
   const username = document.getElementById('username').value;
   const password = document.getElementById('password').value;
+  
+  // Security validation
+  if (!username || !password) {
+    notifications.error('Please enter both username and password');
+    return;
+  }
   
   const formData = new FormData();
   formData.append('username', username);
@@ -199,6 +252,10 @@ document.getElementById('loginFormElement').addEventListener('submit', async (e)
       localStorage.setItem('authToken', authToken);
       await getCurrentUser();
       showAdminInterface();
+      
+      // Clear form for security
+      document.getElementById('username').value = '';
+      document.getElementById('password').value = '';
     } else {
       const error = await response.json();
       notifications.error(error.detail || 'Login failed');

@@ -3,10 +3,11 @@ import asyncio
 import ssl
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from app.api import credits_v2, auth
@@ -22,6 +23,42 @@ PORT = int(os.getenv("PORT", "8000"))
 SSL_CERT_PATH = os.getenv("SSL_CERT_PATH", os.path.join(BASE_DIR, "ssl", "cert.pem"))
 SSL_KEY_PATH = os.getenv("SSL_KEY_PATH", os.path.join(BASE_DIR, "ssl", "key.pem"))
 ENABLE_SSL = os.getenv("ENABLE_SSL", "false").lower() == "true"
+
+# Security Middleware
+class SecurityMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Check for credentials in URL and log security warning
+        query_params = str(request.url.query).lower()
+        dangerous_params = ['username', 'password', 'user', 'pass', 'login', 'auth', 'token']
+        
+        if any(param in query_params for param in dangerous_params):
+            # Log security incident
+            client_ip = request.client.host if request.client else "unknown"
+            try:
+                db.log_action(
+                    log_type="security_warning",
+                    actor="security_middleware",
+                    message=f"Credentials detected in URL from IP {client_ip}. URL: {request.url.path}",
+                    metadata={"client_ip": client_ip, "user_agent": request.headers.get("user-agent", "unknown")}
+                )
+            except Exception as e:
+                print(f"Failed to log security warning: {e}")
+            print(f"🚨 SECURITY WARNING: Credentials detected in URL from {client_ip}")
+        
+        response = await call_next(request)
+        
+        # Add security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        
+        # Add Strict-Transport-Security for HTTPS
+        if ENABLE_SSL:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        
+        return response
 
 # File watcher for OpenWebUI database changes
 class OpenWebUIDBWatcher(FileSystemEventHandler):
@@ -210,6 +247,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Add security middleware first
+app.add_middleware(SecurityMiddleware)
+
 # Static files setup
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 index_file = os.path.join(static_dir, "index.html")
@@ -217,10 +257,12 @@ index_file = os.path.join(static_dir, "index.html")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.get("/")
+@app.head("/")
 def serve_index():
     return FileResponse(index_file)
 
 @app.get("/pricing")
+@app.head("/pricing")
 def serve_pricing():
     """Public pricing page - no authentication required"""
     pricing_file = os.path.join(static_dir, "pricing.html")
@@ -241,6 +283,7 @@ app.add_middleware(
 
 # Health check endpoint (public)
 @app.get("/health", tags=["health"])
+@app.head("/health", tags=["health"])
 async def health_check():
     """Public health check endpoint for monitoring"""
     return {"status": "healthy", "service": "credit-management-system", "version": "2.0"}
