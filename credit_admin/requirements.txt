@@ -4,6 +4,5 @@ watchdog
 pydantic
 httpx
 python-jose[cryptography]
-passlib[bcrypt]
 bcrypt>=4.0.0,<5.0.0
 python-multipart

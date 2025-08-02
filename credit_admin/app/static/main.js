@@ -12,6 +12,12 @@ class NotificationManager {
 
   init() {
     this.container = document.getElementById('notificationContainer');
+    if (!this.container) {
+      this.container = document.createElement('div');
+      this.container.id = 'notificationContainer';
+      this.container.className = 'fixed top-4 right-4 z-50 space-y-2';
+      document.body.appendChild(this.container);
+    }
   }
 
   show(message, type = 'info', duration = 0) {
@@ -37,25 +43,37 @@ class NotificationManager {
     div.className = `notification p-4 rounded-md shadow-lg border ${this.getTypeClasses(type)}`;
     div.setAttribute('data-notification-id', id);
     
-    div.innerHTML = `
-      <div class="flex items-start justify-between">
-        <div class="flex-1">
-          <div class="flex items-center">
-            ${this.getTypeIcon(type)}
-            <span class="ml-2 text-sm font-medium">${this.getTypeTitle(type)}</span>
-          </div>
-          <p class="mt-1 text-sm">${message}</p>
-        </div>
-        <div class="ml-4 flex space-x-1">
-          <button onclick="notifications.remove(${id})" 
-                  class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-    `;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex items-start justify-between';
+    
+    const leftDiv = document.createElement('div');
+    leftDiv.className = 'flex-1';
+    
+    const headerDiv = document.createElement('div');
+    headerDiv.className = 'flex items-center';
+    headerDiv.innerHTML = `${this.getTypeIcon(type)} <span class="ml-2 text-sm font-medium">${this.getTypeTitle(type)}</span>`;
+    
+    const messageP = document.createElement('p');
+    messageP.className = 'mt-1 text-sm';
+    messageP.textContent = message; // Safe from XSS
+    
+    leftDiv.appendChild(headerDiv);
+    leftDiv.appendChild(messageP);
+    
+    const rightDiv = document.createElement('div');
+    rightDiv.className = 'ml-4 flex space-x-1';
+    
+    const closeButton = document.createElement('button');
+    closeButton.className = 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300';
+    closeButton.innerHTML = `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+      <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+    </svg>`;
+    closeButton.addEventListener('click', () => this.remove(id));
+    
+    rightDiv.appendChild(closeButton);
+    wrapper.appendChild(leftDiv);
+    wrapper.appendChild(rightDiv);
+    div.appendChild(wrapper);
 
     return div;
   }
@@ -172,7 +190,12 @@ function clearCredentialsFromURL() {
 
 // Check authentication on page load
 document.addEventListener('DOMContentLoaded', () => {
+  clearCredentialsFromURL(); // FIRST - Security fix
   notifications.init(); // Initialize notification system
+  
+  // Set up global event delegation for main content area
+  setupGlobalEventDelegation();
+  
   
   if (authToken) {
     verifyToken();
@@ -183,23 +206,99 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+// Global event delegation for all interactive elements in main content
+function setupGlobalEventDelegation() {
+  const mainContent = document.getElementById('mainContent');
+  if (!mainContent) {
+    console.error('mainContent element not found!');
+    return;
+  }
+  
+  mainContent.addEventListener('click', (e) => {
+    // User edit buttons
+    if (e.target.classList.contains('edit-user-btn')) {
+      const userId = e.target.getAttribute('data-user-id');
+      if (userId) editUser(userId);
+      return;
+    }
+    
+    // Group edit buttons  
+    if (e.target.classList.contains('edit-group-btn')) {
+      const groupId = e.target.getAttribute('data-group-id');
+      if (groupId) editGroup(groupId);
+      return;
+    }
+    
+    // Model edit buttons
+    if (e.target.classList.contains('edit-model-btn')) {
+      const modelId = e.target.getAttribute('data-model-id');
+      if (modelId) editModel(modelId);
+      return;
+    }
+    
+    // Export buttons
+    if (e.target.classList.contains('export-users-btn')) {
+      exportUsersToExcel();
+      return;
+    }
+    if (e.target.classList.contains('export-groups-btn')) {
+      exportGroupsToExcel();
+      return;
+    }
+    if (e.target.classList.contains('export-models-btn')) {
+      exportModelsToExcel();
+      return;
+    }
+    
+    // Sync buttons
+    if (e.target.classList.contains('sync-users-btn')) {
+      syncUsersFromOpenWebUI(e);
+      return;
+    }
+    if (e.target.classList.contains('sync-models-btn')) {
+      syncModelsFromOpenWebUI(e);
+      return;
+    }
+    
+    // Search clear buttons
+    if (e.target.id === 'clearUserSearch') {
+      clearUserSearch();
+      return;
+    }
+    if (e.target.id === 'clearGroupSearch') {
+      clearGroupSearch();
+      return;
+    }
+    if (e.target.id === 'clearModelSearch') {
+      clearModelSearch();
+      return;
+    }
+    
+    // Model filter buttons (check target and parent elements)
+    let filterTarget = e.target;
+    if (!filterTarget.classList.contains('filter-status-btn')) {
+      filterTarget = filterTarget.closest('.filter-status-btn');
+    }
+    if (filterTarget && filterTarget.classList.contains('filter-status-btn')) {
+      const status = filterTarget.getAttribute('data-status');
+      if (status) filterModelsByStatus(status);
+      return;
+    }
+  });
+}
+
 function showLoginForm() {
-  document.getElementById('loginForm').classList.remove('hidden');
-  document.getElementById('adminInterface').classList.add('hidden');
+  const loginForm = document.getElementById('loginForm');
+  const adminInterface = document.getElementById('adminInterface');
+  if (loginForm) loginForm.classList.remove('hidden');
+  if (adminInterface) adminInterface.classList.add('hidden');
 }
 
 function showAdminInterface() {
-  document.getElementById('loginForm').classList.add('hidden');
-  document.getElementById('adminInterface').classList.remove('hidden');
-  
-  // Show security incident warning if this is the first login after fix
-  const securityWarningShown = localStorage.getItem('securityWarningShown');
-  if (!securityWarningShown) {
-    setTimeout(() => {
-      notifications.warning('🚨 SECURITY NOTICE: Security fixes have been applied to prevent credential exposure in URLs. Please review SECURITY_INCIDENT_RESPONSE.md for details.', 15000);
-      localStorage.setItem('securityWarningShown', 'true');
-    }, 2000);
-  }
+  const loginForm = document.getElementById('loginForm');
+  const adminInterface = document.getElementById('adminInterface');
+  if (loginForm) loginForm.classList.add('hidden');
+  if (adminInterface) adminInterface.classList.remove('hidden');
   
   // Restore the last viewed page from localStorage, default to 'users'
   const lastViewedPage = localStorage.getItem('lastViewedPage') || 'users';
@@ -257,8 +356,13 @@ document.getElementById('loginFormElement').addEventListener('submit', async (e)
       document.getElementById('username').value = '';
       document.getElementById('password').value = '';
     } else {
-      const error = await response.json();
-      notifications.error(error.detail || 'Login failed');
+      try {
+        const error = await response.json();
+        notifications.error(error.detail || 'Login failed');
+      } catch {
+        const text = await response.text().catch(() => '');
+        notifications.error(text || 'Login failed');
+      }
     }
   } catch (error) {
     notifications.error('Network error. Please try again.');
@@ -274,13 +378,21 @@ async function verifyToken() {
     });
     
     if (response.ok) {
-      await getCurrentUser();
+      currentUser = await response.json(); // reuse data to avoid double call
+      const userInfoElement = document.getElementById('userInfo');
+      if (userInfoElement) {
+        userInfoElement.textContent = `Logged in as: ${currentUser.username}`;
+      }
       showAdminInterface();
-    } else {
+    } else if (response.status === 401 || response.status === 403) {
       logout();
+    } else {
+      // Non-auth error; optionally notify
+      notifications.warning('Could not verify session (server error). Retrying later.');
     }
   } catch (error) {
-    logout();
+    // Network error; do not logout
+    notifications.warning('Network issue while verifying session. You may continue working; we will retry.');
   }
 }
 
@@ -294,7 +406,14 @@ async function getCurrentUser() {
     
     if (response.ok) {
       currentUser = await response.json();
-      document.getElementById('userInfo').textContent = `Logged in as: ${currentUser.username}`;
+      const userInfoElement = document.getElementById('userInfo');
+      if (userInfoElement) {
+        userInfoElement.textContent = `Logged in as: ${currentUser.username}`;
+      }
+    } else if (response.status === 401 || response.status === 403) {
+      logout();
+    } else {
+      console.error('Failed to get user info: HTTP', response.status);
     }
   } catch (error) {
     console.error('Failed to get user info:', error);
@@ -313,18 +432,38 @@ function logout() {
   }
 }
 
+// Custom error class for authentication errors
+class AuthenticationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'AuthenticationError';
+  }
+}
+
 // Update fetch function to include auth header
 async function authenticatedFetch(url, options = {}) {
   if (!authToken) {
     logout();
-    throw new Error('Not authenticated');
+    throw new AuthenticationError('Not authenticated');
   }
   
   const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${authToken}`,
-    ...options.headers
+    Authorization: `Bearer ${authToken}`,
+    ...(options.headers || {})
   };
+  
+  // Set Content-Type only if not provided and body is JSON string or plain object
+  const hasBody = options.body !== undefined && options.body !== null;
+  const isJsonString = typeof options.body === 'string' && options.body.trim().startsWith('{');
+  const isPlainObject = options.body && typeof options.body === 'object' && 
+                       !(options.body instanceof FormData) && !(options.body instanceof Blob);
+  
+  if (!headers['Content-Type'] && hasBody && (isJsonString || isPlainObject)) {
+    headers['Content-Type'] = 'application/json';
+    if (isPlainObject) {
+      options.body = JSON.stringify(options.body);
+    }
+  }
   
   try {
     const response = await fetch(url, {
@@ -332,7 +471,7 @@ async function authenticatedFetch(url, options = {}) {
       headers
     });
     
-    if (response.status === 401) {
+    if (response.status === 401 || response.status === 403) {
       // Token is invalid or expired
       logout();
       throw new AuthenticationError('Authentication expired. Please log in again.');
@@ -348,29 +487,14 @@ async function authenticatedFetch(url, options = {}) {
       // Re-throw authentication errors so they can be handled specially
       throw error;
     }
-    // For network errors or other issues, also check if it might be auth-related
-    if (error.message.includes('NetworkError') || error.message.includes('Failed to fetch')) {
-      // Could be a network issue, but let's verify the token is still valid
-      await verifyTokenSilently();
-    }
+    // Do not force logout on network failures; they may be transient
     throw error;
-  }
-}
-
-// Custom error class for authentication issues
-class AuthenticationError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'AuthenticationError';
   }
 }
 
 // Silent token verification (doesn't show login form on success)
 async function verifyTokenSilently() {
-  if (!authToken) {
-    logout();
-    return false;
-  }
+  if (!authToken) return false;
   
   try {
     const response = await fetch('/auth/me', {
@@ -379,14 +503,9 @@ async function verifyTokenSilently() {
       }
     });
     
-    if (!response.ok) {
-      logout();
-      return false;
-    }
-    
+    if (!response.ok) return false;
     return true;
-  } catch (error) {
-    logout();
+  } catch {
     return false;
   }
 }
@@ -480,7 +599,8 @@ function filterModels(query) {
 
 function applyModelFilters() {
   const searchQuery = window.currentModelSearchQuery || '';
-  const statusFilter = document.getElementById('statusFilter')?.value || 'all';
+  const statusFilterElement = document.getElementById('statusFilter');
+  const statusFilter = statusFilterElement ? statusFilterElement.value : 'all';
   
   const rows = document.querySelectorAll("#mainContent table tbody tr");
   rows.forEach(row => {
@@ -494,10 +614,9 @@ function applyModelFilters() {
     // Apply status filter
     if (shouldShow && statusFilter !== 'all') {
       const statusCell = row.querySelector('td:nth-child(2)');
-      const modelNameCell = row.querySelector('td:nth-child(1)');
-      if (statusCell && modelNameCell) {
+      if (statusCell) {
         const isAvailable = statusCell.textContent.includes('Available') && !statusCell.textContent.includes('Unavailable');
-        const isFree = modelNameCell.textContent.includes('FREE');
+        const isFree = statusCell.textContent.includes('FREE');
         
         if (statusFilter === 'available' && !isAvailable) {
           shouldShow = false;
@@ -599,13 +718,13 @@ function updateLegendHighlight(activeFilter) {
   // Add highlight to active filter
   let activeItem = null;
   if (activeFilter === 'available') {
-    activeItem = document.querySelector('[onclick="filterModelsByStatus(\'available\')"]');
+    activeItem = document.querySelector('[data-status="available"]');
   } else if (activeFilter === 'unavailable') {
-    activeItem = document.querySelector('[onclick="filterModelsByStatus(\'unavailable\')"]');
+    activeItem = document.querySelector('[data-status="unavailable"]');
   } else if (activeFilter === 'free') {
-    activeItem = document.querySelector('[onclick="filterModelsByStatus(\'free\')"]');
+    activeItem = document.querySelector('[data-status="free"]');
   } else if (activeFilter === 'all') {
-    activeItem = document.querySelector('[onclick="filterModelsByStatus(\'all\')"]');
+    activeItem = document.querySelector('[data-status="all"]');
   }
   
   if (activeItem) {
@@ -621,18 +740,19 @@ async function renderUsersView() {
   <div class="flex items-center justify-between mb-4">
     <h2 class="text-2xl font-bold">User Credit Management</h2>
     <div class="flex items-center border border-gray-300 dark:border-gray-700 rounded-xl px-2 py-1 w-64 bg-white dark:bg-gray-900">
-      <div class="self-center mr-2 text-gray-500 dark:text-gray-400">
+      <label for="userSearchInput" class="self-center mr-2 text-gray-500 dark:text-gray-400" aria-label="Search users">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
           <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"></path>
         </svg>
-      </div>
+      </label>
       <input 
         id="userSearchInput"
         class="w-full text-sm bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
         placeholder="Search"
+        aria-label="Search users"
         oninput="filterUsers(this.value)"
       />
-      <button id="clearUserSearch" onclick="clearUserSearch()" class="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" style="display: none;" title="Clear search">
+      <button type="button" id="clearUserSearch" class="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" style="display: none;" title="Clear search">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
           <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
         </svg>
@@ -659,12 +779,12 @@ async function renderUsersView() {
     for (const user of currentUsers) {
       table += `
         <tr class="bg-white dark:bg-gray-900 border-t">
-          <td class="px-3 py-1 text-xs font-bold text-blue-600 dark:text-blue-300">${user.role}</td>
-          <td class="px-3 py-1">${user.name}</td>
-          <td class="px-3 py-1">${user.email}</td>
+          <td class="px-3 py-1 text-xs font-bold text-blue-600 dark:text-blue-300">${escapeHtml(user.role)}</td>
+          <td class="px-3 py-1">${escapeHtml(user.name)}</td>
+          <td class="px-3 py-1">${escapeHtml(user.email)}</td>
           <td class="px-3 py-1">${user.credits}</td>
           <td class="px-3 py-1 text-right">
-            <button class="px-2 py-1 text-sm bg-blue-600 text-white rounded" onclick="editUser('${user.id}')">Edit</button>
+            <button type="button" class="px-2 py-1 text-sm bg-blue-600 text-white rounded edit-user-btn" data-user-id="${escapeHtml(user.id)}">Edit</button>
           </td>
         </tr>`;
     }
@@ -673,29 +793,26 @@ async function renderUsersView() {
 container.innerHTML += table;
 container.innerHTML += `
   <div class="flex gap-2 mt-4">
-    <button onclick="exportUsersToExcel()" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+    <button type="button" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 export-users-btn">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
         <path stroke-linecap="round" stroke-linejoin="round" d="m9 12.75 3 3m0 0 3-3m-3 3v-7.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
       </svg>
       Export Users to Excel
     </button>
-    <button onclick="syncUsersFromOpenWebUI()" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+    <button type="button" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 sync-users-btn">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
         <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
       </svg>
       Sync Users from OpenWebUI
     </button>
-  </div>
-  <div id="modalRoot"></div>`;
+  </div>`;
 
-
-    container.innerHTML += `<div id="modalRoot"></div>`;
   } catch (err) {
     if (err instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    container.innerHTML += `<p class="text-red-500">Error loading users: ${err.message}</p>`;
+    container.innerHTML += `<p class="text-red-500">Error loading users: ${escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -708,22 +825,33 @@ function editUser(userId) {
   modal.innerHTML = `
     <div class="bg-white dark:bg-gray-800 p-6 rounded-lg w-full max-w-md shadow-xl">
       <div class="flex justify-between mb-4">
-        <h2 class="text-lg font-bold">Edit Credits for ${user.name}</h2>
-        <button onclick="this.closest('.fixed').remove()">✕</button>
+        <h2 class="text-lg font-bold">Edit Credits for ${escapeHtml(user.name)}</h2>
+        <button type="button" class="close-btn">✕</button>
       </div>
       <div class="space-y-3">
         <label class="block text-sm">Credit Amount</label>
         <input type="number" id="creditInput" value="${user.credits}" class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
       </div>
       <div class="flex justify-end gap-2 pt-4">
-        <button onclick="this.closest('.fixed').remove()" class="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded-md">Cancel</button>
-        <button onclick="saveUserCredits('${user.id}')" class="px-3 py-1 bg-blue-600 text-white rounded-md">Save</button>
+        <button type="button" class="cancel-btn px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded-md">Cancel</button>
+        <button type="button" class="save-btn px-3 py-1 bg-blue-600 text-white rounded-md">Save</button>
       </div>
     </div>`;
 
-  document.getElementById('modalRoot').appendChild(modal);
+  const modalRoot = document.getElementById('modalRoot') || document.body;
+  modalRoot.appendChild(modal);
+  
+  // Add event listeners
+  modal.querySelector('.close-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('.cancel-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('.save-btn').addEventListener('click', () => saveUserCredits(userId, modal));
 }
+
 function exportUsersToExcel() {
+  if (!window.XLSX) {
+    notifications.error('Export library not loaded.');
+    return;
+  }
   if (!currentUsers.length) {
     notifications.warning("No user data available for export.");
     return;
@@ -735,6 +863,10 @@ function exportUsersToExcel() {
 }
 
 function exportGroupsToExcel() {
+  if (!window.XLSX) {
+    notifications.error('Export library not loaded.');
+    return;
+  }
   if (!currentGroups.length) {
     notifications.warning("No group data available for export.");
     return;
@@ -746,6 +878,10 @@ function exportGroupsToExcel() {
 }
 
 function exportModelsToExcel() {
+  if (!window.XLSX) {
+    notifications.error('Export library not loaded.');
+    return;
+  }
   if (!currentModels.length) {
     notifications.warning("No model data available for export.");
     return;
@@ -757,27 +893,37 @@ function exportModelsToExcel() {
 }
 
 
-async function saveUserCredits(userId) {
+async function saveUserCredits(userId, modal) {
   const input = document.getElementById('creditInput');
   const newCredits = parseFloat(input.value);
 
-  const res = await authenticatedFetch('/api/credits/update', {
-    method: 'POST',
-    body: JSON.stringify({ user_id: userId, credits: newCredits, actor: 'admin' })
-  });
+  if (isNaN(newCredits) || newCredits < 0) {
+    notifications.error('Please enter a valid credit amount');
+    return;
+  }
 
-  const result = await res.json();
-  if (result.status === 'success') {
-    notifications.success(`Credits successfully updated to ${newCredits}`);
-    document.querySelector('.fixed').remove();
-    renderUsersView();
-  } else {
-    notifications.error('Error saving credits');
+  try {
+    const res = await authenticatedFetch('/api/credits/update', {
+      method: 'POST',
+      body: { user_id: userId, credits: newCredits, actor: 'admin' }
+    });
+
+    const result = await res.json();
+    if (result.status === 'success') {
+      notifications.success(`Credits successfully updated to ${newCredits}`);
+      if (modal) modal.remove();
+      renderUsersView();
+    } else {
+      notifications.error(result.message || 'Error saving credits');
+    }
+  } catch (err) {
+    if (err instanceof AuthenticationError) return;
+    notifications.error(`Error saving credits: ${err.message}`);
   }
 }
 
-async function syncUsersFromOpenWebUI() {
-  const button = event.target;
+async function syncUsersFromOpenWebUI(e) {
+  const button = e.currentTarget;
   const originalText = button.innerHTML;
   
   // Show loading state
@@ -800,7 +946,7 @@ async function syncUsersFromOpenWebUI() {
       notifications.success('Users synced successfully from OpenWebUI!');
       renderUsersView(); // Refresh the user list
     } else {
-      notifications.error(`Sync failed: ${result.message}`);
+      notifications.error(`Sync failed: ${result.message || 'Unknown error'}`);
     }
   } catch (error) {
     if (error instanceof AuthenticationError) {
@@ -815,8 +961,8 @@ async function syncUsersFromOpenWebUI() {
   }
 }
 
-async function syncModelsFromOpenWebUI() {
-  const button = event.target;
+async function syncModelsFromOpenWebUI(e) {
+  const button = e.currentTarget;
   const originalText = button.innerHTML;
   
   // Show loading state
@@ -839,7 +985,7 @@ async function syncModelsFromOpenWebUI() {
       notifications.success('Models synced successfully from OpenWebUI!');
       renderModelsView(); // Refresh the models list
     } else {
-      notifications.error(`Model sync failed: ${result.message}`);
+      notifications.error(`Model sync failed: ${result.message || 'Unknown error'}`);
     }
   } catch (error) {
     if (error instanceof AuthenticationError) {
@@ -860,14 +1006,14 @@ async function renderGroupsView() {
   <div class="flex items-center justify-between mb-4">
     <h2 class="text-2xl font-bold">Group Management</h2>
     <div class="flex items-center border border-gray-300 dark:border-gray-700 rounded-xl px-2 py-1 w-64 bg-white dark:bg-gray-900">
-      <div class="self-center mr-2 text-gray-500 dark:text-gray-400">
+      <label for="groupSearchInput" class="self-center mr-2 text-gray-500 dark:text-gray-400" aria-label="Search groups">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
           <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
         </svg>
-      </div>
+      </label>
       <input id="groupSearchInput" class="w-full text-sm bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
-             placeholder="Search" oninput="filterGroups(this.value)">
-      <button id="clearGroupSearch" onclick="clearGroupSearch()" class="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" style="display: none;" title="Clear search">
+             placeholder="Search" aria-label="Search groups" oninput="filterGroups(this.value)">
+      <button type="button" id="clearGroupSearch" class="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" style="display: none;" title="Clear search">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
           <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
         </svg>
@@ -893,10 +1039,10 @@ async function renderGroupsView() {
     for (const group of currentGroups) {
       table += `
         <tr class="bg-white dark:bg-gray-900 border-t">
-          <td class="px-3 py-1">${group.name}</td>
+          <td class="px-3 py-1">${escapeHtml(group.name)}</td>
           <td class="px-3 py-1">${group.default_credits}</td>
           <td class="px-3 py-1 text-right">
-            <button class="px-2 py-1 text-sm bg-blue-600 text-white rounded" onclick="editGroup('${group.id}')">Edit</button>
+            <button type="button" class="px-2 py-1 text-sm bg-blue-600 text-white rounded edit-group-btn" data-group-id="${escapeHtml(group.id)}">Edit</button>
           </td>
         </tr>`;
     }
@@ -904,21 +1050,19 @@ async function renderGroupsView() {
    table += '</tbody></table>';
 container.innerHTML += table;
 container.innerHTML += `
-  <button onclick="exportGroupsToExcel()" class="mt-4 flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+  <button type="button" class="mt-4 flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 export-groups-btn">
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
       <path stroke-linecap="round" stroke-linejoin="round" d="m9 12.75 3 3m0 0 3-3m-3 3v-7.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
     </svg>
     Export Groups to Excel
-  </button>
-  <div id="modalRoot"></div>`;
-
+  </button>`;
 
   } catch (err) {
     if (err instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    container.innerHTML += `<p class="text-red-500">Error loading groups: ${err.message}</p>`;
+    container.innerHTML += `<p class="text-red-500">Error loading groups: ${escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -931,42 +1075,58 @@ function editGroup(groupId) {
   modal.innerHTML = `
     <div class="bg-white dark:bg-gray-800 p-6 rounded-lg w-full max-w-md shadow-xl">
       <div class="flex justify-between mb-4">
-        <h2 class="text-lg font-bold">Edit Group: ${group.name}</h2>
-        <button onclick="this.closest('.fixed').remove()">✕</button>
+        <h2 class="text-lg font-bold">Edit Group: ${escapeHtml(group.name)}</h2>
+        <button type="button" class="close-btn">✕</button>
       </div>
       <div class="space-y-3">
         <label class="block text-sm">Default Credits</label>
         <input type="number" id="groupCreditInput" value="${group.default_credits}" class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
       </div>
       <div class="flex justify-end gap-2 pt-4">
-        <button onclick="this.closest('.fixed').remove()" class="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded-md">Cancel</button>
-        <button onclick="saveGroupCredits('${group.id}')" class="px-3 py-1 bg-blue-600 text-white rounded-md">Save</button>
+        <button type="button" class="cancel-btn px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded-md">Cancel</button>
+        <button type="button" class="save-btn px-3 py-1 bg-blue-600 text-white rounded-md">Save</button>
       </div>
     </div>`;
 
-  document.getElementById('modalRoot').appendChild(modal);
+  const modalRoot = document.getElementById('modalRoot') || document.body;
+  modalRoot.appendChild(modal);
+  
+  // Add event listeners
+  modal.querySelector('.close-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('.cancel-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('.save-btn').addEventListener('click', () => saveGroupCredits(groupId, modal));
 }
 
-async function saveGroupCredits(groupId) {
+async function saveGroupCredits(groupId, modal) {
   const input = document.getElementById('groupCreditInput');
   const newCredits = parseFloat(input.value);
+  
+  if (isNaN(newCredits) || newCredits < 0) {
+    notifications.error('Please enter a valid credit amount');
+    return;
+  }
   
   // Get the group name from current groups
   const group = currentGroups.find(g => g.id === groupId);
   const groupName = group ? group.name : 'Unknown';
 
-  const res = await authenticatedFetch('/api/credits/groups/update', {
-    method: 'POST',
-    body: JSON.stringify({ group_id: groupId, name: groupName, default_credits: newCredits, actor: 'admin' })
-  });
+  try {
+    const res = await authenticatedFetch('/api/credits/groups/update', {
+      method: 'POST',
+      body: { group_id: groupId, name: groupName, default_credits: newCredits, actor: 'admin' }
+    });
 
-  const result = await res.json();
-  if (result.status === 'success') {
-    notifications.success(`Group credits successfully set to ${newCredits}`);
-    document.querySelector('.fixed').remove();
-    renderGroupsView();
-  } else {
-    notifications.error('Error saving group credits');
+    const result = await res.json();
+    if (result.status === 'success') {
+      notifications.success(`Group credits successfully set to ${newCredits}`);
+      if (modal) modal.remove();
+      renderGroupsView();
+    } else {
+      notifications.error(result.message || 'Error saving group credits');
+    }
+  } catch (err) {
+    if (err instanceof AuthenticationError) return;
+    notifications.error(`Error saving group credits: ${err.message}`);
   }
 }
 
@@ -986,14 +1146,14 @@ async function renderModelsView() {
         </select>
       </div>
       <div class="flex items-center border border-gray-300 dark:border-gray-700 rounded-xl px-2 py-1 w-64 bg-white dark:bg-gray-900">
-        <div class="self-center mr-2 text-gray-500 dark:text-gray-400">
+        <label for="modelSearchInput" class="self-center mr-2 text-gray-500 dark:text-gray-400" aria-label="Search models">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
             <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clip-rule="evenodd"/>
           </svg>
-        </div>
+        </label>
         <input id="modelSearchInput" class="w-full text-sm bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 outline-none"
-               placeholder="Search models..." oninput="filterModels(this.value)">
-        <button id="clearModelSearch" onclick="clearModelSearch()" class="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" style="display: none;" title="Clear search">
+               placeholder="Search models..." aria-label="Search models" oninput="filterModels(this.value)">
+        <button type="button" id="clearModelSearch" class="ml-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" style="display: none;" title="Clear search">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
             <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
           </svg>
@@ -1080,7 +1240,7 @@ async function renderModelsView() {
         
       table += `
         <tr class="${rowClass}">
-          <td class="px-3 py-1 ${nameClass}">${model.name}${freeBadge}</td>
+          <td class="px-3 py-1 ${nameClass}">${escapeHtml(model.name)}${freeBadge}</td>
           <td class="px-3 py-1">${statusBadge}</td>
           <td class="px-3 py-1 ${priceClass}">
             ${priceDisplay}
@@ -1089,7 +1249,7 @@ async function renderModelsView() {
             ${genPriceDisplay}
           </td>
           <td class="px-3 py-1 text-right">
-            <button class="px-2 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700" onclick="editModel('${model.id}')">Edit</button>
+            <button type="button" class="px-2 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 edit-model-btn" data-model-id="${escapeHtml(model.id)}">Edit</button>
           </td>
         </tr>`;
     }
@@ -1103,19 +1263,19 @@ async function renderModelsView() {
 
     container.innerHTML += `
       <div class="flex items-center gap-4 mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors" onclick="filterModelsByStatus('available')" title="Click to show only available models">
+        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="available" title="Click to show only available models">
           <span class="w-3 h-3 bg-green-400 rounded-full"></span>
           <span class="text-sm"><strong>${availableCount}</strong> Available Models</span>
         </div>
-        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors" onclick="filterModelsByStatus('free')" title="Click to show only free models">
+        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="free" title="Click to show only free models">
           <span class="w-3 h-3 bg-blue-400 rounded-full"></span>
           <span class="text-sm"><strong>${freeCount}</strong> Free Models</span>
         </div>
-        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors" onclick="filterModelsByStatus('unavailable')" title="Click to show only unavailable models">
+        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="unavailable" title="Click to show only unavailable models">
           <span class="w-3 h-3 bg-red-400 rounded-full"></span>
           <span class="text-sm"><strong>${unavailableCount}</strong> Unavailable Models</span>
         </div>
-        <div class="legend-item text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors" onclick="filterModelsByStatus('all')" title="Click to show all models">
+        <div class="legend-item text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="all" title="Click to show all models">
           Total: <strong>${currentModels.length}</strong> models
         </div>
       </div>
@@ -1124,28 +1284,26 @@ async function renderModelsView() {
 container.innerHTML += table;
 container.innerHTML += `
   <div class="flex gap-2 mt-4">
-    <button onclick="exportModelsToExcel()" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+    <button type="button" class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 export-models-btn">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
         <path stroke-linecap="round" stroke-linejoin="round" d="m9 12.75 3 3m0 0 3-3m-3 3v-7.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
       </svg>
       Export Models to Excel
     </button>
-    <button onclick="syncModelsFromOpenWebUI()" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+    <button type="button" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 sync-models-btn">
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
         <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
       </svg>
       Sync Models from OpenWebUI
     </button>
-  </div>
-  <div id="modalRoot"></div>`;
-
+  </div>`;
 
   } catch (err) {
     if (err instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    container.innerHTML += `<p class="text-red-500">Error loading models: ${err.message}</p>`;
+    container.innerHTML += `<p class="text-red-500">Error loading models: ${escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -1184,24 +1342,21 @@ async function editModel(modelId) {
   modal.innerHTML = `
     <div class="bg-white dark:bg-gray-800 p-6 rounded-lg w-full max-w-md shadow-xl">
       <div class="flex justify-between mb-4">
-        <h2 class="text-lg font-bold">Edit Model: ${model.name}</h2>
-        <button onclick="this.closest('.fixed').remove()">✕</button>
+        <h2 class="text-lg font-bold">Edit Model: ${escapeHtml(model.name)}</h2>
+        <button type="button" class="close-btn">✕</button>
       </div>
       
       <div class="mb-4" id="pricingModeSection">
         <label class="block text-sm font-medium mb-2">Pricing Mode</label>
         <div class="flex border border-gray-300 dark:border-gray-700 rounded-md overflow-hidden">
-          <button id="creditModeBtn" onclick="switchPricingMode('credits')" 
-                  class="flex-1 px-3 py-2 text-sm bg-blue-600 text-white">Credits</button>
-          <button id="usdModeBtn" onclick="switchPricingMode('usd')" 
-                  class="flex-1 px-3 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200">USD</button>
+          <button type="button" id="creditModeBtn" class="pricing-mode-btn flex-1 px-3 py-2 text-sm bg-blue-600 text-white" data-mode="credits">Credits</button>
+          <button type="button" id="usdModeBtn" class="pricing-mode-btn flex-1 px-3 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200" data-mode="usd">USD</button>
         </div>
       </div>
       
       <div class="mb-4">
         <label class="flex items-center gap-2">
           <input type="checkbox" id="freeModelCheckbox" ${(model.is_free === true || model.is_free === 1) ? 'checked' : ''} 
-                 onchange="toggleFreeModel()" 
                  class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600">
           <span class="text-sm font-medium">🆓 Free Model (no credits charged)</span>
         </label>
@@ -1211,8 +1366,7 @@ async function editModel(modelId) {
         <div>
           <label class="block text-sm">Context Token Price <span id="contextUnit">(credits per ${displayUnit})</span></label>
           <input type="number" id="contextPriceInput" value="${displayContextPrice}" step="any" 
-                 oninput="updateConversion()" 
-                 class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
+                 class="conversion-input w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
           <div id="contextConversion" class="text-xs text-gray-500 mt-1">
             ≈ $${model.context_price_usd ? (model.context_price_usd * tokenMultiplier).toFixed(6) : 'N/A'} USD per ${displayUnit}
           </div>
@@ -1221,8 +1375,7 @@ async function editModel(modelId) {
         <div>
           <label class="block text-sm">Generation Token Price <span id="generationUnit">(credits per ${displayUnit})</span></label>
           <input type="number" id="generationPriceInput" value="${displayGenerationPrice}" step="any" 
-                 oninput="updateConversion()" 
-                 class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
+                 class="conversion-input w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
           <div id="generationConversion" class="text-xs text-gray-500 mt-1">
             ≈ $${model.generation_price_usd ? (model.generation_price_usd * tokenMultiplier).toFixed(6) : 'N/A'} USD per ${displayUnit}
           </div>
@@ -1230,12 +1383,25 @@ async function editModel(modelId) {
       </div>
       
       <div class="flex justify-end gap-2 pt-4">
-        <button onclick="this.closest('.fixed').remove()" class="px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded-md">Cancel</button>
-        <button onclick="saveModelPricing('${model.id}')" class="px-3 py-1 bg-blue-600 text-white rounded-md">Save</button>
+        <button type="button" class="cancel-btn px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded-md">Cancel</button>
+        <button type="button" class="save-btn px-3 py-1 bg-blue-600 text-white rounded-md">Save</button>
       </div>
     </div>`;
 
-  document.getElementById('modalRoot').appendChild(modal);
+  const modalRoot = document.getElementById('modalRoot') || document.body;
+  modalRoot.appendChild(modal);
+  
+  // Add event listeners
+  modal.querySelector('.close-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('.cancel-btn').addEventListener('click', () => modal.remove());
+  modal.querySelector('.save-btn').addEventListener('click', () => saveModelPricing(modelId, modal));
+  modal.querySelector('#freeModelCheckbox').addEventListener('change', toggleFreeModel);
+  modal.querySelectorAll('.pricing-mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchPricingMode(btn.dataset.mode));
+  });
+  modal.querySelectorAll('.conversion-input').forEach(input => {
+    input.addEventListener('input', updateConversion);
+  });
   
   // Store the current pricing mode, model data, conversion ratio, token multiplier, and original credit values
   window.currentPricingMode = 'credits';
@@ -1359,7 +1525,7 @@ function switchPricingMode(mode) {
   updateConversion();
 }
 
-async function saveModelPricing(modelId) {
+async function saveModelPricing(modelId, modal) {
   const contextInput = document.getElementById('contextPriceInput');
   const generationInput = document.getElementById('generationPriceInput');
   const freeCheckbox = document.getElementById('freeModelCheckbox');
@@ -1369,6 +1535,13 @@ async function saveModelPricing(modelId) {
   const tokenMultiplier = window.tokenMultiplier || 1000;
   const isFree = freeCheckbox.checked;
 
+  // Validation
+  if (!isFree && (isNaN(displayContextPrice) || isNaN(displayGenerationPrice) || 
+                  displayContextPrice < 0 || displayGenerationPrice < 0)) {
+    notifications.error('Please enter valid prices');
+    return;
+  }
+
   // Convert displayed prices back to per-token prices for storage in database
   let contextPrice, generationPrice;
   
@@ -1377,34 +1550,41 @@ async function saveModelPricing(modelId) {
     contextPrice = 0;
     generationPrice = 0;
   } else if (priceMode === 'usd') {
-    // Input is in USD per displayUnit, convert to USD per token
-    contextPrice = displayContextPrice / tokenMultiplier;
-    generationPrice = displayGenerationPrice / tokenMultiplier;
+    // Input is in USD per displayUnit, convert to credits per token for storage
+    const usdPerTokenContext = displayContextPrice / tokenMultiplier;
+    const usdPerTokenGeneration = displayGenerationPrice / tokenMultiplier;
+    contextPrice = usdPerTokenContext * (window.usdToCreditRatio || 1000);
+    generationPrice = usdPerTokenGeneration * (window.usdToCreditRatio || 1000);
   } else {
     // Input is in credits per displayUnit, convert to credits per token
     contextPrice = displayContextPrice / tokenMultiplier;
     generationPrice = displayGenerationPrice / tokenMultiplier;
   }
 
-  const res = await authenticatedFetch('/api/credits/models/update', {
-    method: 'POST',
-    body: JSON.stringify({ 
-      model_id: modelId, 
-      context_price: contextPrice, 
-      generation_price: generationPrice, 
-      price_mode: priceMode,
-      is_free: isFree,
-      actor: 'admin' 
-    })
-  });
+  try {
+    const res = await authenticatedFetch('/api/credits/models/update', {
+      method: 'POST',
+      body: { 
+        model_id: modelId, 
+        context_price: contextPrice, 
+        generation_price: generationPrice, 
+        price_mode: priceMode,
+        is_free: isFree,
+        actor: 'admin' 
+      }
+    });
 
-  const result = await res.json();
-  if (result.status === 'success') {
-    notifications.success(`Model pricing successfully updated.`);
-    document.querySelector('.fixed').remove();
-    renderModelsView();
-  } else {
-    notifications.error('Error saving model pricing');
+    const result = await res.json();
+    if (result.status === 'success') {
+      notifications.success('Model pricing successfully updated.');
+      if (modal) modal.remove();
+      renderModelsView();
+    } else {
+      notifications.error(result.message || 'Error saving model pricing');
+    }
+  } catch (err) {
+    if (err instanceof AuthenticationError) return;
+    notifications.error(`Error saving model pricing: ${err.message}`);
   }
 }
 
@@ -1422,7 +1602,7 @@ async function renderSystemLogsView() {
   container.innerHTML = `
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-2xl font-bold">System Logs</h2>
-      <button onclick="renderSystemLogsView()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors flex items-center gap-2" title="Refresh logs">
+      <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors flex items-center gap-2 refresh-system-logs-btn" title="Refresh logs">
         ${getRefreshIconSVG()}
         Refresh
       </button>
@@ -1449,21 +1629,29 @@ async function renderSystemLogsView() {
       const timestamp = new Date(log.created_at).toLocaleString();
       table += `
         <tr class="bg-white dark:bg-gray-900 border-t">
-          <td class="px-3 py-1 text-xs">${timestamp}</td>
-          <td class="px-3 py-1 text-xs font-mono">${log.log_type}</td>
-          <td class="px-3 py-1 text-xs">${log.actor}</td>
-          <td class="px-3 py-1 text-xs">${log.message || ''}</td>
+          <td class="px-3 py-1 text-xs">${escapeHtml(timestamp)}</td>
+          <td class="px-3 py-1 text-xs font-mono">${escapeHtml(log.log_type)}</td>
+          <td class="px-3 py-1 text-xs">${escapeHtml(log.actor)}</td>
+          <td class="px-3 py-1 text-xs">${escapeHtml(log.message || '')}</td>
         </tr>`;
     }
 
     table += '</tbody></table>';
     container.innerHTML += table;
+    
+    // Add event listener for refresh button
+    container.addEventListener('click', (e) => {
+      if (e.target.classList.contains('refresh-system-logs-btn')) {
+        renderSystemLogsView();
+      }
+    });
+    
   } catch (err) {
     if (err instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    container.innerHTML += `<p class="text-red-500">Error loading system logs: ${err.message}</p>`;
+    container.innerHTML += `<p class="text-red-500">Error loading system logs: ${escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -1472,7 +1660,7 @@ async function renderTransactionLogsView() {
   container.innerHTML = `
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-2xl font-bold">Transaction Logs</h2>
-      <button onclick="renderTransactionLogsView()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors flex items-center gap-2" title="Refresh logs">
+      <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors flex items-center gap-2 refresh-transaction-logs-btn" title="Refresh logs">
         ${getRefreshIconSVG()}
         Refresh
       </button>
@@ -1532,41 +1720,49 @@ async function renderTransactionLogsView() {
       // Get transaction type color class
       const typeClass = `transaction-type transaction-type-${transaction.transaction_type.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
       
-      // Display user name with user_id tooltip
+      // Display user name with user_id tooltip - escape all user data
       const userName = transaction.user_name || transaction.user_id;
       const userDisplay = transaction.user_name 
-        ? `<span class="user-display" title="User ID: ${transaction.user_id}">${transaction.user_name}</span>`
-        : `<span class="font-mono">${transaction.user_id}</span>`;
+        ? `<span class="user-display" title="User ID: ${escapeHtml(transaction.user_id)}">${escapeHtml(transaction.user_name)}</span>`
+        : `<span class="font-mono">${escapeHtml(transaction.user_id)}</span>`;
       
-      // Display model information with token details if available
-      let modelInfo = transaction.model_id || '';
+      // Display model information with token details if available - escape model data
+      let modelInfo = escapeHtml(transaction.model_id || '');
       if (transaction.model_id && (transaction.prompt_tokens || transaction.completion_tokens)) {
         const promptTokens = transaction.prompt_tokens || 0;
         const completionTokens = transaction.completion_tokens || 0;
-        modelInfo = `<span title="Prompt: ${promptTokens} tokens, Completion: ${completionTokens} tokens">${transaction.model_id}</span>`;
+        modelInfo = `<span title="Prompt: ${promptTokens} tokens, Completion: ${completionTokens} tokens">${escapeHtml(transaction.model_id)}</span>`;
       }
       
       table += `
         <tr class="bg-white dark:bg-gray-900 border-t">
-          <td class="px-3 py-1 text-xs">${timestamp}</td>
+          <td class="px-3 py-1 text-xs">${escapeHtml(timestamp)}</td>
           <td class="px-3 py-1 text-xs">${userDisplay}</td>
           <td class="px-3 py-1 text-xs ${amountClass}">${transaction.amount > 0 ? '+' : ''}${transaction.amount}</td>
-          <td class="px-3 py-1 text-xs"><span class="${typeClass}">${transaction.transaction_type}</span></td>
+          <td class="px-3 py-1 text-xs"><span class="${typeClass}">${escapeHtml(transaction.transaction_type)}</span></td>
           <td class="px-3 py-1 text-xs">${modelInfo}</td>
-          <td class="px-3 py-1 text-xs">${transaction.actor}</td>
+          <td class="px-3 py-1 text-xs">${escapeHtml(transaction.actor)}</td>
           <td class="px-3 py-1 text-xs">${transaction.balance_after}</td>
-          <td class="px-3 py-1 text-xs">${transaction.reason || ''}</td>
+          <td class="px-3 py-1 text-xs">${escapeHtml(transaction.reason || '')}</td>
         </tr>`;
     }
 
     table += '</tbody></table>';
     container.innerHTML += table;
+    
+    // Add event listener for refresh button
+    container.addEventListener('click', (e) => {
+      if (e.target.classList.contains('refresh-transaction-logs-btn')) {
+        renderTransactionLogsView();
+      }
+    });
+    
   } catch (err) {
     if (err instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    container.innerHTML += `<p class="text-red-500">Error loading transaction logs: ${err.message}</p>`;
+    container.innerHTML += `<p class="text-red-500">Error loading transaction logs: ${escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -1622,7 +1818,7 @@ async function renderSettingsView() {
               <p class="text-xs text-gray-600 dark:text-gray-400">Display unit: ${currentSettings.token_multiplier == 1 ? '1 token' : currentSettings.token_multiplier == 1000 ? '1K tokens' : '1M tokens'}</p>
             </div>
           </div>
-          <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+          <button type="button" onclick="saveSettings()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
             Save Settings
           </button>
         </div>
@@ -1714,7 +1910,7 @@ async function renderCurrentUsageView() {
         monthlyData = await monthlyRes.json();
       }
     } catch (err) {
-      console.log('Could not load monthly data:', err);
+      console.error('Could not load monthly data:', err);
     }
     
     document.getElementById('mainContent').innerHTML = `
@@ -1824,7 +2020,6 @@ function populateMonthSelector() {
   const select = document.getElementById('monthSelect');
   
   if (!select) {
-    console.log('❌ monthSelect element not found!');
     return;
   }
   

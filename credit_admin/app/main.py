@@ -27,24 +27,33 @@ ENABLE_SSL = os.getenv("ENABLE_SSL", "false").lower() == "true"
 # Security Middleware
 class SecurityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Check for credentials in URL and log security warning
-        query_params = str(request.url.query).lower()
-        dangerous_params = ['username', 'password', 'user', 'pass', 'login', 'auth', 'token']
+        # Clean dangerous query params and redirect if found
+        dangerous = {'username', 'password', 'user', 'pass', 'login', 'auth', 'token'}
+        query = request.query_params.multi_items()
+        cleaned = [(k, v) for (k, v) in query if k.lower() not in dangerous]
         
-        if any(param in query_params for param in dangerous_params):
-            # Log security incident
+        if len(cleaned) != len(query):
+            # Build clean URL and redirect (302)
+            from urllib.parse import urlencode
+            clean_qs = urlencode(cleaned, doseq=True)
+            clean_url = str(request.url.replace(query=clean_qs))
+            
+            # Log security incident before redirect
             client_ip = request.client.host if request.client else "unknown"
             try:
                 db.log_action(
                     log_type="security_warning",
                     actor="security_middleware",
-                    message=f"Credentials detected in URL from IP {client_ip}. URL: {request.url.path}",
+                    message=f"Credentials in URL. Redirecting to clean URL. From IP {client_ip}: {request.url.path}",
                     metadata={"client_ip": client_ip, "user_agent": request.headers.get("user-agent", "unknown")}
                 )
             except Exception as e:
                 print(f"Failed to log security warning: {e}")
-            print(f"🚨 SECURITY WARNING: Credentials detected in URL from {client_ip}")
+                
+            print(f"🚨 SECURITY: Redirecting credentials in URL from {client_ip} to clean URL")
+            return Response(status_code=302, headers={"Location": clean_url})
         
+        # Continue processing if URL is clean
         response = await call_next(request)
         
         # Add security headers
@@ -272,12 +281,13 @@ def serve_pricing():
 app.include_router(auth.router)
 app.include_router(credits_v2.router)
 
-# CORS middleware
+# CORS middleware - Tighten for production security
+# In production, replace "*" with actual allowed origins like ["https://yourdomain.com"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
+    allow_origins=["*"],  # TODO: In production, specify exact origins like ["https://yourdomain.com"]
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],  # Restrict to needed methods only
     allow_headers=["*"],
 )
 

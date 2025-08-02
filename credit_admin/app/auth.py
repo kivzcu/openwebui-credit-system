@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from pydantic import BaseModel
 
 # Security configuration
@@ -20,8 +20,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")  # Change this!
 # API Key for extensions - use a fixed default that matches extensions
 API_KEY = os.getenv("CREDITS_API_KEY", "vY97Yvh6qKywm8xE-ErTGfUofV0t1BiZ36wR3lLNHIY")
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Security setup
 security = HTTPBearer()
 
 class Token(BaseModel):
@@ -39,10 +38,18 @@ class UserInDB(User):
     hashed_password: str
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify a password against its hash"""
+    password_byte_enc = plain_password.encode('utf-8')
+    # Handle both string and bytes for hashed_password
+    hashed_bytes = hashed_password.encode('utf-8') if isinstance(hashed_password, str) else hashed_password
+    return bcrypt.checkpw(password=password_byte_enc, hashed_password=hashed_bytes)
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    """Hash a password"""
+    pwd_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    hashed_password = bcrypt.hashpw(password=pwd_bytes, salt=salt)
+    return hashed_password.decode('utf-8')
 
 def get_user(username: str) -> Optional[UserInDB]:
     """Get user from our simple in-memory store"""
@@ -78,7 +85,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     )
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
+        username = payload.get("sub")
         if username is None:
             raise credentials_exception
         token_data = TokenData(username=username)
