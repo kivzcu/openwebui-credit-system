@@ -261,15 +261,15 @@ function setupGlobalEventDelegation() {
     }
     
     // Search clear buttons
-    if (e.target.id === 'clearUserSearch') {
+    if (e.target.id === 'clearUserSearch' || e.target.closest('#clearUserSearch')) {
       clearUserSearch();
       return;
     }
-    if (e.target.id === 'clearGroupSearch') {
+    if (e.target.id === 'clearGroupSearch' || e.target.closest('#clearGroupSearch')) {
       clearGroupSearch();
       return;
     }
-    if (e.target.id === 'clearModelSearch') {
+    if (e.target.id === 'clearModelSearch' || e.target.closest('#clearModelSearch')) {
       clearModelSearch();
       return;
     }
@@ -1191,6 +1191,9 @@ async function saveGroupCredits(groupId, modal) {
 
 async function renderModelsView() {
   const container = document.getElementById('mainContent');
+  
+  // Reset search state when rendering models view
+  window.currentModelSearchQuery = '';
   
   // Build the complete HTML string
   let completeHtml = `
