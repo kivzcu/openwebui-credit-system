@@ -1242,17 +1242,14 @@ async function renderModelsView() {
     
     currentModels = await modelsRes.json();
     const settings = await settingsRes.json();
-    const tokenMultiplier = settings.token_multiplier || 1000; // Default to 1K tokens
     
-    // Helper function to get display unit text
-    const getDisplayUnit = (multiplier) => {
-      if (multiplier === 1) return '1 token';
-      if (multiplier === 1000) return '1K tokens';
-      if (multiplier === 1000000) return '1M tokens';
-      return `${multiplier} tokens`;
-    };
+    // Create price display helper with current settings
+    const priceHelper = new PriceDisplayHelper(
+      settings.usd_to_credit_ratio || 1000.0,
+      settings.token_multiplier || 1000
+    );
     
-    const displayUnit = getDisplayUnit(tokenMultiplier);
+    const displayUnit = priceHelper.getDisplayUnit();
 
     let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
       <thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850">
@@ -1273,12 +1270,6 @@ async function renderModelsView() {
       
       const nameClass = '';
       const priceClass = '';
-      
-      // Apply token multiplier to display prices
-      const displayContextPrice = (model.context_price * tokenMultiplier).toFixed(6);
-      const displayGenerationPrice = (model.generation_price * tokenMultiplier).toFixed(6);
-      const displayContextPriceUsd = model.context_price_usd ? (model.context_price_usd * tokenMultiplier).toFixed(6) : 'N/A';
-      const displayGenerationPriceUsd = model.generation_price_usd ? (model.generation_price_usd * tokenMultiplier).toFixed(6) : 'N/A';
       
       // Check if model is free and restricted
       const isFree = model.is_free === true || model.is_free === 1;
@@ -1308,13 +1299,9 @@ async function renderModelsView() {
       // Remove the duplicate FREE badge from model name since it's now in status
       const freeBadge = '';
       
-      const priceDisplay = isFree 
-        ? '<div class="text-xs"><div><strong>FREE</strong></div><div class="text-gray-500">No charge</div></div>'
-        : `<div class="text-xs"><div><strong>${displayContextPrice}</strong> credits</div><div class="text-gray-500">$${displayContextPriceUsd}</div></div>`;
-      
-      const genPriceDisplay = isFree 
-        ? '<div class="text-xs"><div><strong>FREE</strong></div><div class="text-gray-500">No charge</div></div>'
-        : `<div class="text-xs"><div><strong>${displayGenerationPrice}</strong> credits</div><div class="text-gray-500">$${displayGenerationPriceUsd}</div></div>`;
+      // Use helper to format prices consistently
+      const priceDisplay = priceHelper.formatTablePrice(model.context_price, isFree);
+      const genPriceDisplay = priceHelper.formatTablePrice(model.generation_price, isFree);
         
       table += `
         <tr class="${rowClass}">
@@ -1412,19 +1399,15 @@ async function editModel(modelId) {
     console.warn('Could not fetch settings, using default values:', err);
   }
   
-  // Helper function to get display unit text
-  const getDisplayUnit = (multiplier) => {
-    if (multiplier === 1) return '1 token';
-    if (multiplier === 1000) return '1K tokens';
-    if (multiplier === 1000000) return '1M tokens';
-    return `${multiplier} tokens`;
-  };
+  // Create price display helper
+  const priceHelper = new PriceDisplayHelper(usdToCreditRatio, tokenMultiplier);
+  const displayUnit = priceHelper.getDisplayUnit();
   
-  const displayUnit = getDisplayUnit(tokenMultiplier);
-  
-  // Apply token multiplier to display values (prices are stored per 1 token in DB)
-  const displayContextPrice = (model.context_price * tokenMultiplier).toFixed(6);
-  const displayGenerationPrice = (model.generation_price * tokenMultiplier).toFixed(6);
+  // Get display values
+  const displayContextPrice = priceHelper.creditsToDisplay(model.context_price);
+  const displayGenerationPrice = priceHelper.creditsToDisplay(model.generation_price);
+  const displayContextPriceUsd = priceHelper.creditsToUsdDisplay(model.context_price);
+  const displayGenerationPriceUsd = priceHelper.creditsToUsdDisplay(model.generation_price);
   
   const modal = document.createElement('div');
   modal.className = 'fixed inset-0 bg-black/30 flex items-center justify-center z-50';
@@ -1457,7 +1440,7 @@ async function editModel(modelId) {
           <input type="number" id="contextPriceInput" value="${displayContextPrice}" step="any" 
                  class="conversion-input w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
           <div id="contextConversion" class="text-xs text-gray-500 mt-1">
-            ≈ $${model.context_price_usd ? (model.context_price_usd * tokenMultiplier).toFixed(6) : 'N/A'} USD per ${displayUnit}
+            ≈ $${displayContextPriceUsd} USD per ${displayUnit}
           </div>
         </div>
         
@@ -1466,7 +1449,7 @@ async function editModel(modelId) {
           <input type="number" id="generationPriceInput" value="${displayGenerationPrice}" step="any" 
                  class="conversion-input w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700">
           <div id="generationConversion" class="text-xs text-gray-500 mt-1">
-            ≈ $${model.generation_price_usd ? (model.generation_price_usd * tokenMultiplier).toFixed(6) : 'N/A'} USD per ${displayUnit}
+            ≈ $${displayGenerationPriceUsd} USD per ${displayUnit}
           </div>
         </div>
       </div>
@@ -1507,6 +1490,7 @@ async function editModel(modelId) {
   window.currentModelData = model;
   window.usdToCreditRatio = usdToCreditRatio;
   window.tokenMultiplier = tokenMultiplier;
+  window.priceHelper = priceHelper; // Store the helper for use in other functions
   // Always store the original credit values (per 1 token from DB) for accurate conversion
   window.originalContextCredits = model.context_price;
   window.originalGenerationCredits = model.generation_price;
@@ -1543,41 +1527,34 @@ function updateConversion() {
   const contextConversion = document.getElementById('contextConversion');
   const generationConversion = document.getElementById('generationConversion');
   
-  if (!contextInput || !generationInput || !window.usdToCreditRatio || !window.tokenMultiplier) return;
+  if (!contextInput || !generationInput || !window.priceHelper) return;
   
   const contextValue = parseFloat(contextInput.value) || 0;
   const generationValue = parseFloat(generationInput.value) || 0;
-  const ratio = window.usdToCreditRatio;
-  const tokenMultiplier = window.tokenMultiplier;
-  
-  // Helper function to get display unit text
-  const getDisplayUnit = (multiplier) => {
-    if (multiplier === 1) return '1 token';
-    if (multiplier === 1000) return '1K tokens';
-    if (multiplier === 1000000) return '1M tokens';
-    return `${multiplier} tokens`;
-  };
-  
-  const displayUnit = getDisplayUnit(tokenMultiplier);
+  const priceHelper = window.priceHelper;
+  const displayUnit = priceHelper.getDisplayUnit();
   
   if (window.currentPricingMode === 'usd') {
     // Converting USD (per displayUnit) to credits (per displayUnit) for display
-    contextConversion.textContent = `≈ ${(contextValue * ratio).toFixed(6)} credits per ${displayUnit}`;
-    generationConversion.textContent = `≈ ${(generationValue * ratio).toFixed(6)} credits per ${displayUnit}`;
+    const contextCredits = priceHelper.displayUsdToCredits(contextValue);
+    const generationCredits = priceHelper.displayUsdToCredits(generationValue);
+    contextConversion.textContent = `≈ ${priceHelper.creditsToDisplay(contextCredits)} credits per ${displayUnit}`;
+    generationConversion.textContent = `≈ ${priceHelper.creditsToDisplay(generationCredits)} credits per ${displayUnit}`;
   } else {
     // Converting credits (per displayUnit) to USD (per displayUnit) for display
-    contextConversion.textContent = `≈ $${(contextValue / ratio).toFixed(6)} USD per ${displayUnit}`;
-    generationConversion.textContent = `≈ $${(generationValue / ratio).toFixed(6)} USD per ${displayUnit}`;
+    const contextCreditsPerToken = priceHelper.displayToCredits(contextValue);
+    const generationCreditsPerToken = priceHelper.displayToCredits(generationValue);
+    contextConversion.textContent = `≈ $${priceHelper.creditsToUsdDisplay(contextCreditsPerToken)} USD per ${displayUnit}`;
+    generationConversion.textContent = `≈ $${priceHelper.creditsToUsdDisplay(generationCreditsPerToken)} USD per ${displayUnit}`;
   }
 }
 
 function switchPricingMode(mode) {
-  const ratio = window.usdToCreditRatio;
-  const tokenMultiplier = window.tokenMultiplier;
+  const priceHelper = window.priceHelper;
   const originalContextCredits = window.originalContextCredits;
   const originalGenerationCredits = window.originalGenerationCredits;
   
-  if (!ratio || !tokenMultiplier || originalContextCredits === undefined || originalGenerationCredits === undefined) return;
+  if (!priceHelper || originalContextCredits === undefined || originalGenerationCredits === undefined) return;
   
   const contextInput = document.getElementById('contextPriceInput');
   const generationInput = document.getElementById('generationPriceInput');
@@ -1586,20 +1563,12 @@ function switchPricingMode(mode) {
   const creditBtn = document.getElementById('creditModeBtn');
   const usdBtn = document.getElementById('usdModeBtn');
   
-  // Helper function to get display unit text
-  const getDisplayUnit = (multiplier) => {
-    if (multiplier === 1) return '1 token';
-    if (multiplier === 1000) return '1K tokens';
-    if (multiplier === 1000000) return '1M tokens';
-    return `${multiplier} tokens`;
-  };
-  
-  const displayUnit = getDisplayUnit(tokenMultiplier);
+  const displayUnit = priceHelper.getDisplayUnit();
   
   if (mode === 'usd') {
     // Switch to USD mode - convert original credit values to USD and apply token multiplier for display
-    contextInput.value = ((originalContextCredits / ratio) * tokenMultiplier).toFixed(7);
-    generationInput.value = ((originalGenerationCredits / ratio) * tokenMultiplier).toFixed(7);
+    contextInput.value = priceHelper.creditsToUsdDisplay(originalContextCredits);
+    generationInput.value = priceHelper.creditsToUsdDisplay(originalGenerationCredits);
     contextUnit.textContent = `(USD per ${displayUnit})`;
     generationUnit.textContent = `(USD per ${displayUnit})`;
     
@@ -1609,8 +1578,8 @@ function switchPricingMode(mode) {
     window.currentPricingMode = 'usd';
   } else {
     // Switch to credits mode - show original credit values multiplied by token multiplier for display
-    contextInput.value = (originalContextCredits * tokenMultiplier).toFixed(6);
-    generationInput.value = (originalGenerationCredits * tokenMultiplier).toFixed(6);
+    contextInput.value = priceHelper.creditsToDisplay(originalContextCredits);
+    generationInput.value = priceHelper.creditsToDisplay(originalGenerationCredits);
     contextUnit.textContent = `(credits per ${displayUnit})`;
     generationUnit.textContent = `(credits per ${displayUnit})`;
     
@@ -1652,15 +1621,13 @@ async function saveModelPricing(modelId, modal) {
     contextPrice = 0;
     generationPrice = 0;
   } else if (priceMode === 'usd') {
-    // Input is in USD per displayUnit, convert to credits per token for storage
-    const usdPerTokenContext = displayContextPrice / tokenMultiplier;
-    const usdPerTokenGeneration = displayGenerationPrice / tokenMultiplier;
-    contextPrice = usdPerTokenContext * (window.usdToCreditRatio || 1000);
-    generationPrice = usdPerTokenGeneration * (window.usdToCreditRatio || 1000);
+    // Input is in USD per displayUnit, use helper to convert to credits per token for storage
+    contextPrice = window.priceHelper.displayUsdToCredits(displayContextPrice);
+    generationPrice = window.priceHelper.displayUsdToCredits(displayGenerationPrice);
   } else {
-    // Input is in credits per displayUnit, convert to credits per token
-    contextPrice = displayContextPrice / tokenMultiplier;
-    generationPrice = displayGenerationPrice / tokenMultiplier;
+    // Input is in credits per displayUnit, use helper to convert to credits per token
+    contextPrice = window.priceHelper.displayToCredits(displayContextPrice);
+    generationPrice = window.priceHelper.displayToCredits(displayGenerationPrice);
   }
 
   try {
@@ -1670,7 +1637,7 @@ async function saveModelPricing(modelId, modal) {
         model_id: modelId, 
         context_price: contextPrice, 
         generation_price: generationPrice, 
-        price_mode: priceMode,
+        price_mode: 'credits', // Always send as credits since frontend handles all conversions
         is_free: isFree,
         actor: 'admin' 
       }
@@ -1993,6 +1960,56 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// Centralized price conversion and display helper
+class PriceDisplayHelper {
+  constructor(usdToCreditRatio = 1000.0, tokenMultiplier = 1000) {
+    this.usdToCreditRatio = usdToCreditRatio;
+    this.tokenMultiplier = tokenMultiplier;
+  }
+
+  // Get display unit text
+  getDisplayUnit() {
+    if (this.tokenMultiplier === 1) return '1 token';
+    if (this.tokenMultiplier === 1000) return '1K tokens';
+    if (this.tokenMultiplier === 1000000) return '1M tokens';
+    return `${this.tokenMultiplier} tokens`;
+  }
+
+  // Convert stored per-token credit price to display format
+  creditsToDisplay(creditsPerToken) {
+    return (creditsPerToken * this.tokenMultiplier).toFixed(6);
+  }
+
+  // Convert stored per-token credit price to USD display format
+  creditsToUsdDisplay(creditsPerToken) {
+    const usdPerToken = creditsPerToken / this.usdToCreditRatio;
+    return (usdPerToken * this.tokenMultiplier).toFixed(6);
+  }
+
+  // Convert display credits back to per-token credits for storage
+  displayToCredits(displayValue) {
+    return parseFloat(displayValue) / this.tokenMultiplier;
+  }
+
+  // Convert display USD back to per-token credits for storage
+  displayUsdToCredits(displayUsdValue) {
+    const usdPerToken = parseFloat(displayUsdValue) / this.tokenMultiplier;
+    return usdPerToken * this.usdToCreditRatio;
+  }
+
+  // Format price for table display with USD conversion
+  formatTablePrice(creditsPerToken, isFree = false) {
+    if (isFree) {
+      return '<div class="text-xs"><div><strong>FREE</strong></div><div class="text-gray-500">No charge</div></div>';
+    }
+    
+    const creditsDisplay = this.creditsToDisplay(creditsPerToken);
+    const usdDisplay = this.creditsToUsdDisplay(creditsPerToken);
+    
+    return `<div class="text-xs"><div><strong>${creditsDisplay}</strong> credits</div><div class="text-gray-500">$${usdDisplay}</div></div>`;
+  }
 }
 
 // Statistics Views
@@ -2682,41 +2699,20 @@ function updateModelRowInPlace(modelId, updatedModel) {
       })
       .then(res => res.json())
       .then(settings => {
-        const tokenMultiplier = settings.token_multiplier || 1000;
-        
-        // Helper function to get display unit text
-        const getDisplayUnit = (multiplier) => {
-          if (multiplier === 1) return '1 token';
-          if (multiplier === 1000) return '1K tokens';
-          if (multiplier === 1000000) return '1M tokens';
-          return `${multiplier} tokens`;
-        };
-        
-        const displayUnit = getDisplayUnit(tokenMultiplier);
-        const displayContextPrice = (model.context_price * tokenMultiplier).toFixed(6);
-        const displayGenerationPrice = (model.generation_price * tokenMultiplier).toFixed(6);
-        
-        // Calculate USD prices from the updated credit prices using the conversion ratio
-        const usdToCreditRatio = settings.usd_to_credit_ratio || 1000.0;
-        const displayContextPriceUsd = ((model.context_price * tokenMultiplier) / usdToCreditRatio).toFixed(6);
-        const displayGenerationPriceUsd = ((model.generation_price * tokenMultiplier) / usdToCreditRatio).toFixed(6);
+        // Create price display helper
+        const priceHelper = new PriceDisplayHelper(
+          settings.usd_to_credit_ratio || 1000.0,
+          settings.token_multiplier || 1000
+        );
         
         const isFree = model.is_free === true || model.is_free === 1;
         
         // Update the pricing cells
         const cells = row.querySelectorAll('td');
         if (cells.length >= 4) {
-          // Context price cell (index 2)
-          const contextPriceDisplay = isFree 
-            ? '<div class="text-xs"><div><strong>FREE</strong></div><div class="text-gray-500">No charge</div></div>'
-            : `<div class="text-xs"><div><strong>${displayContextPrice}</strong> credits</div><div class="text-gray-500">$${displayContextPriceUsd}</div></div>`;
-          cells[2].innerHTML = contextPriceDisplay;
-          
-          // Generation price cell (index 3)
-          const genPriceDisplay = isFree 
-            ? '<div class="text-xs"><div><strong>FREE</strong></div><div class="text-gray-500">No charge</div></div>'
-            : `<div class="text-xs"><div><strong>${displayGenerationPrice}</strong> credits</div><div class="text-gray-500">$${displayGenerationPriceUsd}</div></div>`;
-          cells[3].innerHTML = genPriceDisplay;
+          // Use helper to format prices consistently
+          cells[2].innerHTML = priceHelper.formatTablePrice(model.context_price, isFree);
+          cells[3].innerHTML = priceHelper.formatTablePrice(model.generation_price, isFree);
           
           // Update status cell (index 1) to show consistent badges with renderModelsView
           const isAvailable = model.is_available === true || model.is_available === 1;
