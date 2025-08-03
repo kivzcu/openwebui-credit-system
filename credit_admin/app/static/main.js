@@ -615,12 +615,16 @@ function applyModelFilters() {
     if (shouldShow && statusFilter !== 'all') {
       const statusCell = row.querySelector('td:nth-child(2)');
       if (statusCell) {
-        const isAvailable = statusCell.textContent.includes('Available') && !statusCell.textContent.includes('Unavailable');
-        const isFree = statusCell.textContent.includes('FREE');
+        const isPublic = statusCell.textContent.includes('🟢 Public');
+        const isRestricted = statusCell.textContent.includes('🟡 Restricted');
+        const isPrivate = statusCell.textContent.includes('🔴 Private');
+        const isFree = statusCell.textContent.includes('🆓 FREE');
         
-        if (statusFilter === 'available' && !isAvailable) {
+        if (statusFilter === 'public' && !isPublic) {
           shouldShow = false;
-        } else if (statusFilter === 'unavailable' && isAvailable) {
+        } else if (statusFilter === 'restricted' && !isRestricted) {
+          shouldShow = false;
+        } else if (statusFilter === 'private' && !isPrivate) {
           shouldShow = false;
         } else if (statusFilter === 'free' && !isFree) {
           shouldShow = false;
@@ -717,10 +721,12 @@ function updateLegendHighlight(activeFilter) {
   
   // Add highlight to active filter
   let activeItem = null;
-  if (activeFilter === 'available') {
-    activeItem = document.querySelector('[data-status="available"]');
-  } else if (activeFilter === 'unavailable') {
-    activeItem = document.querySelector('[data-status="unavailable"]');
+  if (activeFilter === 'public') {
+    activeItem = document.querySelector('[data-status="public"]');
+  } else if (activeFilter === 'restricted') {
+    activeItem = document.querySelector('[data-status="restricted"]');
+  } else if (activeFilter === 'private') {
+    activeItem = document.querySelector('[data-status="private"]');
   } else if (activeFilter === 'free') {
     activeItem = document.querySelector('[data-status="free"]');
   } else if (activeFilter === 'all') {
@@ -1204,8 +1210,9 @@ async function renderModelsView() {
         <label class="text-sm font-medium">Filter:</label>
         <select id="statusFilter" onchange="filterModelsByStatus(this.value)" class="px-2 py-1 border border-gray-300 dark:border-gray-700 rounded-md bg-white dark:bg-gray-900 text-sm">
           <option value="all">All Models</option>
-          <option value="available">Available Only</option>
-          <option value="unavailable">Unavailable Only</option>
+          <option value="public">Public Only</option>
+          <option value="restricted">Restricted Only</option>
+          <option value="private">Private Only</option>
           <option value="free">Free Models Only</option>
         </select>
       </div>
@@ -1273,21 +1280,29 @@ async function renderModelsView() {
       const displayContextPriceUsd = model.context_price_usd ? (model.context_price_usd * tokenMultiplier).toFixed(6) : 'N/A';
       const displayGenerationPriceUsd = model.generation_price_usd ? (model.generation_price_usd * tokenMultiplier).toFixed(6) : 'N/A';
       
-      // Check if model is free
+      // Check if model is free and restricted
       const isFree = model.is_free === true || model.is_free === 1;
+      const isRestricted = model.is_restricted === true || model.is_restricted === 1;
       
-      // Create status badge with free indicator for free models
+      // Create simplified status badge - just access level and free status
       let statusBadge;
-      if (isFree) {
-        // For free models, show both availability and free status side by side
-        statusBadge = isAvailable
-          ? '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><span class="w-2 h-2 bg-green-400 rounded-full mr-1.5"></span>Available</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>'
-          : '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"><span class="w-2 h-2 bg-red-400 rounded-full mr-1.5"></span>Unavailable</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>';
+      if (isAvailable) {
+        if (isRestricted) {
+          // Available but restricted
+          statusBadge = isFree 
+            ? '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">🟡 Restricted</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>'
+            : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">🟡 Restricted</span>';
+        } else {
+          // Available and public
+          statusBadge = isFree 
+            ? '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">🟢 Public</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>'
+            : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">🟢 Public</span>';
+        }
       } else {
-        // For paid models, show only availability
-        statusBadge = isAvailable
-          ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><span class="w-2 h-2 bg-green-400 rounded-full mr-1.5"></span>Available</span>'
-          : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"><span class="w-2 h-2 bg-red-400 rounded-full mr-1.5"></span>Unavailable</span>';
+        // Unavailable (private)
+        statusBadge = isFree 
+          ? '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">🔴 Private</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>'
+          : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">🔴 Private</span>';
       }
       
       // Remove the duplicate FREE badge from model name since it's now in status
@@ -1319,24 +1334,30 @@ async function renderModelsView() {
 
     table += '</tbody></table>';
 
-    // Add model summary
+    // Add simplified model summary
     const availableCount = currentModels.filter(m => m.is_available === true || m.is_available === 1).length;
-    const unavailableCount = currentModels.length - availableCount;
+    const privateCount = currentModels.length - availableCount;
     const freeCount = currentModels.filter(m => m.is_free === true || m.is_free === 1).length;
+    const restrictedCount = currentModels.filter(m => m.is_restricted === true || m.is_restricted === 1).length;
+    const publicCount = availableCount - restrictedCount;
 
     const summaryHtml = `
       <div class="flex items-center gap-4 mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="available" title="Click to show only available models">
-          <span class="w-3 h-3 bg-green-400 rounded-full"></span>
-          <span class="text-sm"><strong>${availableCount}</strong> Available Models</span>
+        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="public" title="Click to show only public models">
+          <span class="w-3 h-3 bg-gray-400 rounded-full"></span>
+          <span class="text-sm">🟢 <strong>${publicCount}</strong> Public</span>
+        </div>
+        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="restricted" title="Click to show only restricted models">
+          <span class="w-3 h-3 bg-orange-400 rounded-full"></span>
+          <span class="text-sm">🟡 <strong>${restrictedCount}</strong> Restricted</span>
+        </div>
+        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="private" title="Click to show only private models">
+          <span class="w-3 h-3 bg-red-400 rounded-full"></span>
+          <span class="text-sm">🔴 <strong>${privateCount}</strong> Private</span>
         </div>
         <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="free" title="Click to show only free models">
           <span class="w-3 h-3 bg-blue-400 rounded-full"></span>
-          <span class="text-sm"><strong>${freeCount}</strong> Free Models</span>
-        </div>
-        <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="unavailable" title="Click to show only unavailable models">
-          <span class="w-3 h-3 bg-red-400 rounded-full"></span>
-          <span class="text-sm"><strong>${unavailableCount}</strong> Unavailable Models</span>
+          <span class="text-sm">🆓 <strong>${freeCount}</strong> Free</span>
         </div>
         <div class="legend-item text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="all" title="Click to show all models">
           Total: <strong>${currentModels.length}</strong> models
@@ -2697,19 +2718,29 @@ function updateModelRowInPlace(modelId, updatedModel) {
             : `<div class="text-xs"><div><strong>${displayGenerationPrice}</strong> credits</div><div class="text-gray-500">$${displayGenerationPriceUsd}</div></div>`;
           cells[3].innerHTML = genPriceDisplay;
           
-          // Update status cell (index 1) to show free badge if needed
+          // Update status cell (index 1) to show consistent badges with renderModelsView
           const isAvailable = model.is_available === true || model.is_available === 1;
+          const isRestricted = model.is_restricted === true || model.is_restricted === 1;
+          
+          // Create simplified status badge - just access level and free status (same as renderModelsView)
           let statusBadge;
-          if (isFree) {
-            // For free models, show both availability and free status side by side
-            statusBadge = isAvailable
-              ? '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><span class="w-2 h-2 bg-green-400 rounded-full mr-1.5"></span>Available</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>'
-              : '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"><span class="w-2 h-2 bg-red-400 rounded-full mr-1.5"></span>Unavailable</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>';
+          if (isAvailable) {
+            if (isRestricted) {
+              // Available but restricted
+              statusBadge = isFree 
+                ? '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">🟡 Restricted</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>'
+                : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">🟡 Restricted</span>';
+            } else {
+              // Available and public
+              statusBadge = isFree 
+                ? '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">🟢 Public</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>'
+                : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200">🟢 Public</span>';
+            }
           } else {
-            // For paid models, show only availability
-            statusBadge = isAvailable
-              ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><span class="w-2 h-2 bg-green-400 rounded-full mr-1.5"></span>Available</span>'
-              : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"><span class="w-2 h-2 bg-red-400 rounded-full mr-1.5"></span>Unavailable</span>';
+            // Unavailable (private)
+            statusBadge = isFree 
+              ? '<div class="flex items-center gap-1"><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">🔴 Private</span><span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">🆓 FREE</span></div>'
+              : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">🔴 Private</span>';
           }
           cells[1].innerHTML = statusBadge;
         }
@@ -2731,22 +2762,26 @@ function updateModelLegendCounts() {
   if (!currentModels || currentModels.length === 0) return;
   
   const availableCount = currentModels.filter(m => m.is_available === true || m.is_available === 1).length;
-  const unavailableCount = currentModels.length - availableCount;
+  const privateCount = currentModels.length - availableCount;
   const freeCount = currentModels.filter(m => m.is_free === true || m.is_free === 1).length;
+  const restrictedCount = currentModels.filter(m => m.is_restricted === true || m.is_restricted === 1).length;
+  const publicCount = availableCount - restrictedCount;
   
-  // Find and update legend items
+  // Find and update legend items with new structure
   const legendItems = document.querySelectorAll('.legend-item');
   legendItems.forEach(item => {
     const statusAttr = item.getAttribute('data-status');
     const textElement = item.querySelector('span:last-child');
     
     if (textElement) {
-      if (statusAttr === 'available') {
-        textElement.innerHTML = `<strong>${availableCount}</strong> Available Models`;
-      } else if (statusAttr === 'unavailable') {
-        textElement.innerHTML = `<strong>${unavailableCount}</strong> Unavailable Models`;
+      if (statusAttr === 'public') {
+        textElement.innerHTML = `🟢 <strong>${publicCount}</strong> Public`;
+      } else if (statusAttr === 'restricted') {
+        textElement.innerHTML = `🟡 <strong>${restrictedCount}</strong> Restricted`;
+      } else if (statusAttr === 'private') {
+        textElement.innerHTML = `🔴 <strong>${privateCount}</strong> Private`;
       } else if (statusAttr === 'free') {
-        textElement.innerHTML = `<strong>${freeCount}</strong> Free Models`;
+        textElement.innerHTML = `🆓 <strong>${freeCount}</strong> Free`;
       } else if (statusAttr === 'all') {
         textElement.innerHTML = `Total: <strong>${currentModels.length}</strong> models`;
       }

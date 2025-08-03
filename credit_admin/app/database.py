@@ -83,6 +83,13 @@ class CreditDatabase:
                 # Column already exists
                 pass
             
+            # Add is_restricted column if it doesn't exist (migration)
+            try:
+                cursor.execute("ALTER TABLE credit_models ADD COLUMN is_restricted BOOLEAN NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+            
             # Transaction history
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS credit_transactions (
@@ -375,15 +382,26 @@ class CreditDatabase:
             conn.commit()
             return cursor.rowcount > 0
 
-    def update_model_pricing(self, model_id: str, name: str, context_price: float, 
-                           generation_price: float, is_available: bool = True, is_free: bool = False) -> bool:
-        """Update model pricing, availability status, and free status"""
+    def update_model_restriction_status(self, model_id: str, is_restricted: bool) -> bool:
+        """Update model restriction status only"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT OR REPLACE INTO credit_models (id, name, context_price, generation_price, is_available, is_free, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (model_id, name, context_price, generation_price, is_available, is_free))
+                UPDATE credit_models SET is_restricted = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (is_restricted, model_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def update_model_pricing(self, model_id: str, name: str, context_price: float, 
+                           generation_price: float, is_available: bool = True, is_free: bool = False, is_restricted: bool = False) -> bool:
+        """Update model pricing, availability status, free status, and restriction status"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO credit_models (id, name, context_price, generation_price, is_available, is_free, is_restricted, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (model_id, name, context_price, generation_price, is_available, is_free, is_restricted))
             conn.commit()
             return True
     

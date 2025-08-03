@@ -186,8 +186,8 @@ async def get_all_users_with_credits(current_user: User = Depends(get_current_ad
 
 @router.get("/api/credits/models", tags=["credits"])
 async def get_all_models(current_user: User = Depends(get_current_admin_user)):
-    """Get all model pricing information with availability status - for admin UI"""
-    # Get all models from our local database (availability is already stored)
+    """Get all model pricing information with availability and restriction status - for admin UI"""
+    # Get all models from our local database (availability and restriction are already stored)
     models = db.get_all_models()
     
     # Get USD conversion ratio for display
@@ -202,7 +202,8 @@ async def get_all_models(current_user: User = Depends(get_current_admin_user)):
             "context_price_usd": db.credits_to_usd(model["context_price"]),
             "generation_price_usd": db.credits_to_usd(model["generation_price"]),
             "is_available": model.get("is_available", True),  # Default to True for backward compatibility
-            "is_free": model.get("is_free", False)  # Default to False for backward compatibility
+            "is_free": model.get("is_free", False),  # Default to False for backward compatibility
+            "is_restricted": model.get("is_restricted", False)  # Default to False for backward compatibility
         }
         for model in models
     ]
@@ -240,10 +241,11 @@ async def update_user_credits(request: CreditUpdateRequest, current_user: User =
 
 @router.post("/api/credits/models/update", tags=["credits"])
 async def update_model_pricing(request: ModelPricingRequest, current_user: User = Depends(get_current_admin_user)):
-    """Update model pricing (preserves availability status) - supports both USD and credit pricing"""
-    # Get current model data to preserve availability status
+    """Update model pricing (preserves availability and restriction status) - supports both USD and credit pricing"""
+    # Get current model data to preserve availability and restriction status
     current_model = db.get_model_pricing(request.model_id)
     current_availability = current_model.get("is_available", True) if current_model else True
+    current_restriction = current_model.get("is_restricted", False) if current_model else False
     
     # Convert prices to credits if they're provided in USD
     if request.price_mode == "usd":
@@ -259,7 +261,8 @@ async def update_model_pricing(request: ModelPricingRequest, current_user: User 
         context_price=context_price_credits,
         generation_price=generation_price_credits,
         is_available=current_availability,  # Preserve current availability status
-        is_free=request.is_free  # Update free status
+        is_free=request.is_free,  # Update free status
+        is_restricted=current_restriction  # Preserve current restriction status
     )
     
     if success:
@@ -272,7 +275,9 @@ async def update_model_pricing(request: ModelPricingRequest, current_user: User 
             "generation_price": generation_price_credits,
             "context_price_usd": db.credits_to_usd(context_price_credits),
             "generation_price_usd": db.credits_to_usd(generation_price_credits),
-            "is_free": request.is_free
+            "is_free": request.is_free,
+            "is_available": current_availability,
+            "is_restricted": current_restriction
         }
     else:
         raise HTTPException(status_code=500, detail="Failed to update model pricing")
@@ -299,6 +304,29 @@ async def update_model_free_status(request: dict, current_user: User = Depends(g
         }
     else:
         raise HTTPException(status_code=500, detail="Failed to update model free status")
+
+@router.post("/api/credits/models/update-restriction-status", tags=["credits"])
+async def update_model_restriction_status(request: dict, current_user: User = Depends(get_current_admin_user)):
+    """Update model restriction status only (admin override)"""
+    model_id = request.get("model_id")
+    is_restricted = request.get("is_restricted", False)
+    actor = request.get("actor", "admin")
+    
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    
+    success = db.update_model_restriction_status(model_id, is_restricted)
+    
+    if success:
+        db.log_action("model_restriction_status_update", actor, 
+                     f"Updated model {model_id} restriction status to {is_restricted}")
+        return {
+            "status": "success",
+            "model_id": model_id,
+            "is_restricted": is_restricted
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Failed to update model restriction status")
 
 @router.post("/api/credits/groups/update", tags=["credits"])
 async def update_group_credits(request: GroupUpdateRequest, current_user: User = Depends(get_current_admin_user)):
@@ -369,18 +397,20 @@ async def get_system_logs(limit: int = Query(100, ge=1, le=1000), current_user: 
 # Public endpoint for model pricing
 @router.get("/api/public/models/pricing", tags=["public"])
 async def get_public_model_pricing():
-    """Get pricing for only available models - public endpoint (no authentication required)"""
+    """Get pricing for available models with restriction status - public endpoint (no authentication required)"""
     # Get all models from our local database and filter by availability
     all_models = db.get_all_models()
     
-    # Filter to only include models that are available (stored locally)
+    # Filter to only include models that are available (both public and restricted)
     available_models = [
         {
             "id": model["id"],
             "name": model["name"],
             "context_price": model["context_price"],
             "generation_price": model["generation_price"],
-            "is_free": model.get("is_free", False)
+            "is_free": model.get("is_free", False),
+            "is_restricted": model.get("is_restricted", False),  # Indicate if model has access restrictions
+            "access_level": "public" if not model.get("is_restricted", False) else "restricted"
         }
         for model in all_models
         if model.get("is_available", True)  # Default to True for backward compatibility
@@ -451,19 +481,13 @@ async def sync_user_from_openwebui(user_id: str):
     return False
 
 async def sync_models_from_openwebui():
-    """Sync all models from OpenWebUI database with availability status"""
+    """Sync all models from OpenWebUI database with availability and restriction status"""
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, base_model_id, is_active FROM model")
+            cursor.execute("SELECT id, name, base_model_id, is_active, access_control FROM model")
             models = cursor.fetchall()
-            
-            # Get current available model IDs from OpenWebUI
-            available_model_ids = set()
-            for model in models:
-                if model["is_active"]:
-                    available_model_ids.add(model["id"])
             
             # Get all models from our local database
             local_models = db.get_all_models()
@@ -472,28 +496,73 @@ async def sync_models_from_openwebui():
             synced_count = 0
             updated_count = 0
             
-            # Update availability for all models
+            # Update availability and restriction status for all models
             for model in models:
                 model_id = model["id"]
                 model_name = model["name"] or model_id
-                is_available = bool(model["is_active"])
+                
+                # Determine availability and restriction status
+                is_active = bool(model["is_active"])
+                access_control = model["access_control"]
+                
+                if not is_active:
+                    # Model is inactive - mark as unavailable
+                    is_available = False
+                    is_restricted = False
+                elif access_control is None or access_control == "null" or access_control == "":
+                    # No access control - fully public
+                    is_available = True
+                    is_restricted = False
+                else:
+                    # Has access control - check if it's restrictive or private
+                    import json
+                    try:
+                        # Parse JSON string if needed
+                        if isinstance(access_control, str):
+                            ac = json.loads(access_control)
+                        else:
+                            ac = access_control
+                            
+                        read_groups = ac.get("read", {}).get("group_ids", [])
+                        read_users = ac.get("read", {}).get("user_ids", [])
+                        
+                        if len(read_groups) == 0 and len(read_users) == 0:
+                            # Empty access control - private model
+                            is_available = False
+                            is_restricted = False
+                        else:
+                            # Has specific groups/users - restricted but available
+                            is_available = True
+                            is_restricted = True
+                    except (json.JSONDecodeError, AttributeError, TypeError):
+                        # Fallback for malformed access control - treat as private
+                        is_available = False
+                        is_restricted = False
                 
                 if model_id in local_model_ids:
-                    # Update existing model availability
-                    if db.update_model_availability(model_id, is_available):
+                    # Update existing model availability and restriction status
+                    availability_updated = db.update_model_availability(model_id, is_available)
+                    restriction_updated = db.update_model_restriction_status(model_id, is_restricted)
+                    if availability_updated or restriction_updated:
                         updated_count += 1
                 else:
-                    # Create new model with availability status
+                    # Create new model with availability and restriction status
                     success = db.update_model_pricing(
                         model_id=model_id,
                         name=model_name,
                         context_price=0.001,  # Default context price
                         generation_price=0.004,  # Default generation price
-                        is_available=is_available
+                        is_available=is_available,
+                        is_restricted=is_restricted
                     )
                     if success:
                         synced_count += 1
-                        db.log_action("model_sync", "sync", f"Auto-synced model {model_id} from OpenWebUI (available: {is_available})")
+                        
+                        # Log with detailed status
+                        status_msg = "public" if not is_restricted and is_available else \
+                                   "restricted" if is_restricted and is_available else \
+                                   "private"
+                        db.log_action("model_sync", "sync", f"Auto-synced model {model_id} from OpenWebUI (status: {status_msg})")
             
             # Mark models as unavailable if they no longer exist in OpenWebUI
             openwebui_model_ids = {model["id"] for model in models}

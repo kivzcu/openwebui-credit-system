@@ -360,7 +360,7 @@
             <h1>🏷️ Model Pricing</h1>
             <p>Transparent pricing for all available AI models</p>
             <p style="font-size: 0.9rem; opacity: 0.8; margin-top: 10px;">
-                ℹ️ Only models currently available in your OpenWebUI instance are shown
+                ℹ️ Showing public and restricted models. Private models are not displayed.
             </p>
         </div>
 
@@ -580,13 +580,22 @@
 
                 this.modelsContainer.innerHTML = this.filteredModels.map(model => {
                     const isFree = model.is_free === true || model.is_free === 1;
-                    const freeBadge = isFree ? '<span style="background: #10b981; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; margin-left: 8px;">FREE</span>' : '';
+                    const isRestricted = model.is_restricted === true || model.is_restricted === 1;
+                    
+                    // Create badges based on model status
+                    let badges = '';
+                    if (isFree) {
+                        badges += '<span style="background: #10b981; color: white; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">🆓 FREE</span>';
+                    }
+                    if (isRestricted) {
+                        badges += '<span style="background: #f59e0b; color: white; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; margin-left: 8px;">🟡 RESTRICTED</span>';
+                    }
                     
                     return `
                         <div class="model-card">
                             <div class="model-name">
                                 <div class="model-icon">${this.getModelIcon(model.name)}</div>
-                                <span>${model.name}${freeBadge}</span>
+                                <span>${model.name}${badges}</span>
                             </div>
                             <div class="pricing-info">
                                 <div class="price-item">
