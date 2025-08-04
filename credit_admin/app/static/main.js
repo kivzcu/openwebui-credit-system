@@ -2032,6 +2032,9 @@ async function renderCurrentUsageView() {
     const totalTransactions = currentData.current_usage.reduce((sum, user) => sum + user.usage.transactions_count, 0);
     const activeUsers = currentData.current_usage.length;
     
+    // Calculate total credits remaining (current balance for current month)
+    const totalCreditsRemaining = currentData.current_usage.reduce((sum, user) => sum + user.current_balance, 0);
+    
     // Get unique models used
     const allModels = new Set();
     currentData.current_usage.forEach(user => {
@@ -2088,10 +2091,14 @@ async function renderCurrentUsageView() {
           </div>
 
           <!-- Summary Cards -->
-          <div id="summaryCards" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div id="summaryCards" class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
             <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
               <div class="text-sm font-medium text-green-800 dark:text-green-200">Total Credits Used</div>
               <div id="totalCredits" class="text-2xl font-bold text-green-600 dark:text-green-400">${totalCreditsUsed.toFixed(2)}</div>
+            </div>
+            <div class="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg p-4">
+              <div class="text-sm font-medium text-indigo-800 dark:text-indigo-200">Total Credits Remaining</div>
+              <div id="totalCreditsRemaining" class="text-2xl font-bold text-indigo-600 dark:text-indigo-400">${totalCreditsRemaining.toFixed(2)}</div>
             </div>
             <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
               <div class="text-sm font-medium text-blue-800 dark:text-blue-200">Total Transactions</div>
@@ -2211,6 +2218,9 @@ async function loadMonthlyData() {
       const totalTransactions = currentData.current_usage.reduce((sum, user) => sum + user.usage.transactions_count, 0);
       const activeUsers = currentData.current_usage.length;
       
+      // Calculate total credits remaining (current balance for current month)
+      const totalCreditsRemaining = currentData.current_usage.reduce((sum, user) => sum + user.current_balance, 0);
+      
       // Get unique models used
       const allModels = new Set();
       currentData.current_usage.forEach(user => {
@@ -2222,6 +2232,7 @@ async function loadMonthlyData() {
       const summaryCards = document.getElementById('summaryCards');
       summaryCards.style.display = 'grid';
       document.getElementById('totalCredits').textContent = totalCreditsUsed.toFixed(2);
+      document.getElementById('totalCreditsRemaining').textContent = totalCreditsRemaining.toFixed(2);
       document.getElementById('totalTransactions').textContent = totalTransactions;
       document.getElementById('totalUsers').textContent = activeUsers;
       document.getElementById('totalModels').textContent = modelsUsed;
@@ -2269,6 +2280,7 @@ async function loadMonthlyData() {
         
         // Also reset summary cards for empty data
         document.getElementById('totalCredits').textContent = '0.00';
+        document.getElementById('totalCreditsRemaining').textContent = '0.00';
         document.getElementById('totalTransactions').textContent = '0';
         document.getElementById('totalUsers').textContent = '0';
         document.getElementById('totalModels').textContent = '0';
@@ -2312,6 +2324,16 @@ async function loadMonthlyData() {
     if (hasSummary) {
       summaryCards.style.display = 'grid';
       document.getElementById('totalCredits').textContent = data.summary.total_credits_used.toFixed(2);
+      
+      // Calculate total credits remaining for historical months (sum of balance_before_reset)
+      const totalCreditsRemaining = data.user_statistics && data.user_statistics.length > 0 
+        ? data.user_statistics.reduce((sum, user) => {
+            const balance = user.balance_before_reset !== null && user.balance_before_reset !== undefined ? user.balance_before_reset : 0;
+            return sum + balance;
+          }, 0)
+        : 0;
+      document.getElementById('totalCreditsRemaining').textContent = totalCreditsRemaining.toFixed(2);
+      
       document.getElementById('totalTransactions').textContent = data.summary.total_transactions;
       document.getElementById('totalUsers').textContent = data.summary.unique_users;
       document.getElementById('totalModels').textContent = data.summary.unique_models;
