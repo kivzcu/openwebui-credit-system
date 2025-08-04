@@ -11,6 +11,27 @@ import tiktoken
 import re
 from functools import partial
 
+# Translation table for i18n support
+TRANSLATIONS = {
+    'cs-CZ': {
+        'failed_to_load_metadata': 'Nepodařilo se načíst metadata kreditů: {}',
+        'missing_user_model_data': 'Chybějící data uživatele nebo modelu. Stržení kreditů přeskočeno.',
+        'free_model': '🆓 Bezplatný model - kredity neúčtovány.',
+        'failed_to_deduct': 'Nepodařilo se stáhnout kredity: {}',
+        'insufficient_credits': '⚠️ Nedostatek kreditů! Účtováno {actual_cost:.3f} z {full_cost:.3f} kreditů (chybí {shortage:.3f}) – Zůstatek: {new_balance:.3f}',
+        'charged_credits': '💳 Účtováno {actual_cost:.3f} kreditů – Nový zůstatek: {new_balance:.3f}',
+        'cost_estimate': '⚠️ Cena je odhad.'
+    },
+    'en': {  # Fallback language
+        'failed_to_load_metadata': ' Failed to load credit metadata: {}',
+        'missing_user_model_data': ' Missing user or model data. Credit update skipped.',
+        'free_model': '🆓 Free model - no credits charged.',
+        'failed_to_deduct': ' Failed to deduct credits: {}',
+        'insufficient_credits': '⚠️ Insufficient credits! Charged {actual_cost:.3f} of {full_cost:.3f} credits (short by {shortage:.3f}) – Balance: {new_balance:.3f}',
+        'charged_credits': '💳 Charged {actual_cost:.3f} credits – New balance: {new_balance:.3f}',
+        'cost_estimate': '⚠️ The cost is an estimate.'
+    }
+}
 
 # Support both HTTP and HTTPS based on environment
 CREDITS_API_PROTOCOL = os.getenv("CREDITS_API_PROTOCOL", "https")  # Default to HTTPS
@@ -54,6 +75,28 @@ class Filter:
             r"^(claude-.*)": self._count_tokens_anthropic_dummy,
         }
 
+    def _get_user_language(self, body):
+        """Extract user language from body metadata"""
+        try:
+            return body.get('metadata', {}).get('variables', {}).get('{{USER_LANGUAGE}}', 'en')
+        except:
+            return 'en'
+
+    def _translate(self, key, lang='en', **kwargs):
+        """Get translated string for given key and language"""
+        # Get the translation for the specific language, fallback to English
+        translation = TRANSLATIONS.get(lang, TRANSLATIONS['en']).get(key, TRANSLATIONS['en'].get(key, key))
+        
+        # Ensure we have a valid translation string
+        if translation is None:
+            translation = key
+        
+        # Format the translation with any provided kwargs
+        try:
+            return translation.format(**kwargs)
+        except:
+            return translation
+
     def get_token_count(self, text: str, model_name: str) -> int:
         """
         Returns the token count for a given text and model.
@@ -68,7 +111,7 @@ class Filter:
             encoding = tiktoken.encoding_for_model(model_name)
             return len(encoding.encode(text))
         except KeyError:
-            self.estimation_warning = f"⚠️ The cost is an estimate."
+            self.estimation_warning = "⚠️ The cost is an estimate."
             encoding = tiktoken.get_encoding("cl100k_base")
             return len(encoding.encode(text))
 
@@ -100,6 +143,9 @@ class Filter:
         user_id = __user__.get("id")
         model_name = body.get("model", "gpt-3.5-turbo")
         self.estimation_warning = ""
+        
+        # Get user language for translations
+        user_lang = self._get_user_language(body)
 
         messages = body.get("messages", [])
         if not messages:
@@ -161,7 +207,7 @@ class Filter:
                     {
                         "type": "status",
                         "data": {
-                            "description": f" Failed to load credit metadata: {str(e)}",
+                            "description": self._translate('failed_to_load_metadata', user_lang).format(str(e)),
                             "done": True,
                         },
                     }
@@ -174,7 +220,7 @@ class Filter:
                     {
                         "type": "status",
                         "data": {
-                            "description": " Missing user or model data. Credit update skipped.",
+                            "description": self._translate('missing_user_model_data', user_lang),
                             "done": True,
                         },
                     }
@@ -191,7 +237,7 @@ class Filter:
                     {
                         "type": "status",
                         "data": {
-                            "description": "🆓 Free model - no credits charged.",
+                            "description": self._translate('free_model', user_lang),
                             "done": True,
                         },
                     }
@@ -234,7 +280,7 @@ class Filter:
                     {
                         "type": "status",
                         "data": {
-                            "description": f" Failed to deduct credits: {str(e)}",
+                            "description": self._translate('failed_to_deduct', user_lang).format(str(e)),
                             "done": True,
                         },
                     }
@@ -246,13 +292,17 @@ class Filter:
             if actual_cost < full_cost:
                 # Insufficient funds scenario
                 shortage = full_cost - actual_cost
-                description = f"⚠️ Insufficient credits! Charged {actual_cost:.3f} of {full_cost:.3f} credits (short by {shortage:.3f}) – Balance: {new_balance:.3f}"
+                description = self._translate('insufficient_credits', user_lang, 
+                                            actual_cost=actual_cost, full_cost=full_cost, 
+                                            shortage=shortage, new_balance=new_balance)
             else:
                 # Normal scenario - full payment
-                description = f"💳 Charged {actual_cost:.3f} credits – New balance: {new_balance:.3f}"
+                description = self._translate('charged_credits', user_lang, 
+                                            actual_cost=actual_cost, new_balance=new_balance)
 
             if self.estimation_warning:
-                description = self.estimation_warning + "<br/>" + description
+                estimate_warning = self._translate('cost_estimate', user_lang)
+                description = estimate_warning + "<br/>" + description
 
             await __event_emitter__(
                 {

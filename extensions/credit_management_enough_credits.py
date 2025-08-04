@@ -8,6 +8,26 @@ import os
 from pydantic import BaseModel, Field
 import httpx
 
+# Translation table for i18n support
+TRANSLATIONS = {
+    'cs-CZ': {
+        'failed_to_load_data': 'Nepodařilo se načíst data kreditů: {}',
+        'user_not_found': 'Data uživatele nenalezena.',
+        'model_not_found': 'Model nenalezen v ceníku.',
+        'free_model': '🆓 Bezplatný model - kredity neúčtovány.',
+        'insufficient_prompt_blocked': 'Nedostatek kreditů – prompt zablokován.',
+        'insufficient_credits_error': 'Nemáte dostatek kreditů: {} k dispozici, minimálně {} potřeba.'
+    },
+    'en': {  # Fallback language
+        'failed_to_load_data': 'Unable to load credit data: {}',
+        'user_not_found': 'User data not found.',
+        'model_not_found': 'Model not found in cost list.',
+        'free_model': '🆓 Free model - no credits charged.',
+        'insufficient_prompt_blocked': 'Insufficient credits – prompt blocked.',
+        'insufficient_credits_error': 'You do not have enough credits: {} available, minimum {} required.'
+    }
+}
+
 # Support both HTTP and HTTPS based on environment
 CREDITS_API_PROTOCOL = os.getenv("CREDITS_API_PROTOCOL", "https")  # Default to HTTPS
 CREDITS_API_HOST = os.getenv("CREDITS_API_HOST", "147.228.121.27:8000")
@@ -40,6 +60,28 @@ class Filter:
     def __init__(self):
         self.valves = self.Valves()
 
+    def _get_user_language(self, body):
+        """Extract user language from body metadata"""
+        try:
+            return body.get('metadata', {}).get('variables', {}).get('{{USER_LANGUAGE}}', 'en')
+        except:
+            return 'en'
+
+    def _translate(self, key, lang='en', **kwargs):
+        """Get translated string for given key and language"""
+        # Get the translation for the specific language, fallback to English
+        translation = TRANSLATIONS.get(lang, TRANSLATIONS['en']).get(key, TRANSLATIONS['en'].get(key, key))
+        
+        # Ensure we have a valid translation string
+        if translation is None:
+            translation = key
+        
+        # Format the translation with any provided kwargs
+        try:
+            return translation.format(**kwargs)
+        except:
+            return translation
+
     def format_credit_amount(self, amount):
         """Format credit amount to avoid scientific notation and excessive precision"""
         if amount == 0:
@@ -65,6 +107,9 @@ class Filter:
         model_name = body.get("model")
         prompt_text = body["messages"][-1]["content"]
         prompt_tokens = body.get("prompt_tokens") or max(len(prompt_text) // 4, 1)
+        
+        # Get user language for translations
+        user_lang = self._get_user_language(body)
 
         try:
             # Set up headers with API key
@@ -87,17 +132,17 @@ class Filter:
         except Exception as e:
             body["messages"][-1][
                 "content"
-            ] += f"\n\nUnable to load credit data: {str(e)}"
+            ] += f"\n\n{self._translate('failed_to_load_data', user_lang).format(str(e))}"
             return body
 
         user_data = user_data
         if not user_data:
-            body["messages"][-1]["content"] += "\n\nUser data not found."
+            body["messages"][-1]["content"] += f"\n\n{self._translate('user_not_found', user_lang)}"
             return body
 
         model_data = model_data
         if not model_data:
-            body["messages"][-1]["content"] += "\n\nModel not found in cost list."
+            body["messages"][-1]["content"] += f"\n\n{self._translate('model_not_found', user_lang)}"
             return body
 
         # Check if model is free - if so, allow the request without credit check
@@ -108,7 +153,7 @@ class Filter:
                     {
                         "type": "status",
                         "data": {
-                            "description": "🆓 Free model - no credits charged.",
+                            "description": self._translate('free_model', user_lang),
                             "done": True,
                         },
                     }
@@ -125,14 +170,17 @@ class Filter:
                     {
                         "type": "status",
                         "data": {
-                            "description": f"Insufficient credits – prompt blocked.",
+                            "description": self._translate('insufficient_prompt_blocked', user_lang),
                             "done": True,
                         },
                     }
                 )
 
             raise FilterException(
-                f"You do not have enough credits: {self.format_credit_amount(credits)} available, minimum {self.format_credit_amount(cost)} required."
+                self._translate('insufficient_credits_error', user_lang).format(
+                    self.format_credit_amount(credits), 
+                    self.format_credit_amount(cost)
+                )
             )
 
         # Prompt is allowed, but no success message is emitted
