@@ -34,12 +34,11 @@ class CreditDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Users table - credits and group assignments
+            # Users table - credits (no direct group reference anymore)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS credit_users (
                     id TEXT PRIMARY KEY,
                     balance REAL NOT NULL DEFAULT 0.0,
-                    group_id TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -51,8 +50,22 @@ class CreditDatabase:
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     default_credits REAL NOT NULL DEFAULT 0.0,
+                    is_system_group BOOLEAN NOT NULL DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # User-Group membership junction table for many-to-many relationship
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS credit_user_groups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    group_id TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, group_id),
+                    FOREIGN KEY (user_id) REFERENCES credit_users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (group_id) REFERENCES credit_groups(id) ON DELETE CASCADE
                 )
             """)
             
@@ -88,6 +101,65 @@ class CreditDatabase:
                 cursor.execute("ALTER TABLE credit_models ADD COLUMN is_restricted BOOLEAN NOT NULL DEFAULT 0")
             except sqlite3.OperationalError:
                 # Column already exists
+                pass
+            
+            # Add is_system_group column to credit_groups if it doesn't exist (migration)
+            try:
+                cursor.execute("ALTER TABLE credit_groups ADD COLUMN is_system_group BOOLEAN NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+            
+            # Create default system group if it doesn't exist
+            cursor.execute("""
+                INSERT OR IGNORE INTO credit_groups (id, name, default_credits, is_system_group)
+                VALUES ('default', 'Default Users', 0.0, 1)
+            """)
+            
+            # Ensure existing 'default' group is marked as system group but preserve its credits
+            cursor.execute("""
+                UPDATE credit_groups 
+                SET name = 'Default Users', is_system_group = 1
+                WHERE id = 'default'
+            """)
+            
+            # Migration: Remove old group_id column from credit_users if it exists
+            try:
+                # Check if group_id column exists
+                cursor.execute("PRAGMA table_info(credit_users)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'group_id' in columns:
+                    print("🔄 Migrating credit_users table to remove group_id column...")
+                    
+                    # Create backup of existing user-group relationships
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
+                        SELECT id, group_id FROM credit_users WHERE group_id IS NOT NULL
+                    """)
+                    
+                    # Create new table without group_id
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS credit_users_new (
+                            id TEXT PRIMARY KEY,
+                            balance REAL NOT NULL DEFAULT 0.0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    
+                    # Copy data to new table
+                    cursor.execute("""
+                        INSERT INTO credit_users_new (id, balance, created_at, updated_at)
+                        SELECT id, balance, created_at, updated_at FROM credit_users
+                    """)
+                    
+                    # Drop old table and rename new one
+                    cursor.execute("DROP TABLE credit_users")
+                    cursor.execute("ALTER TABLE credit_users_new RENAME TO credit_users")
+                    
+                    print("✅ Migration completed: credit_users table updated")
+            except sqlite3.OperationalError as e:
+                # Migration already completed or other error
                 pass
             
             # Transaction history
@@ -180,7 +252,8 @@ class CreditDatabase:
                 pass
             
             # Indexes for better performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_users_group ON credit_users(group_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_user_groups_user ON credit_user_groups(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_user_groups_group ON credit_user_groups(group_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON credit_transactions(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_model ON credit_transactions(model_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_type ON credit_logs(log_type)")
@@ -204,10 +277,12 @@ class CreditDatabase:
                     groups_data = json.load(f)
                 
                 for group_id, group_info in groups_data.items():
+                    # Mark migrated groups as non-system groups (they're from previous data)
+                    is_system = group_id == 'default'  # Only 'default' should be marked as system
                     cursor.execute("""
-                        INSERT OR REPLACE INTO credit_groups (id, name, default_credits)
-                        VALUES (?, ?, ?)
-                    """, (group_id, group_info.get('name', ''), group_info.get('default_credits', 0.0)))
+                        INSERT OR REPLACE INTO credit_groups (id, name, default_credits, is_system_group)
+                        VALUES (?, ?, ?, ?)
+                    """, (group_id, group_info.get('name', ''), group_info.get('default_credits', 0.0), is_system))
                 print(f"✅ Migrated {len(groups_data)} groups")
             
             # Migrate models
@@ -236,9 +311,17 @@ class CreditDatabase:
                 for user_id, user_info in users.items():
                     # Insert user
                     cursor.execute("""
-                        INSERT OR REPLACE INTO credit_users (id, balance, group_id)
-                        VALUES (?, ?, ?)
-                    """, (user_id, user_info.get('balance', 0.0), user_info.get('group')))
+                        INSERT OR REPLACE INTO credit_users (id, balance)
+                        VALUES (?, ?)
+                    """, (user_id, user_info.get('balance', 0.0)))
+                    
+                    # Insert user-group relationship if group exists
+                    group_id = user_info.get('group')
+                    if group_id:
+                        cursor.execute("""
+                            INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
+                            VALUES (?, ?)
+                        """, (user_id, group_id))
                     
                     # Migrate transaction history
                     history = user_info.get('history', [])
@@ -265,29 +348,103 @@ class CreditDatabase:
     
     # User operations
     def get_user_credits(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get user's credit information"""
+        """Get user's credit information with all group memberships"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            
+            # Get user basic info
+            cursor.execute("SELECT * FROM credit_users WHERE id = ?", (user_id,))
+            user_row = cursor.fetchone()
+            if not user_row:
+                return None
+
+            user_data = dict(user_row)
+            
+            # Ensure user is always assigned to default group (system group)
             cursor.execute("""
-                SELECT cu.*, cg.name as group_name, cg.default_credits
-                FROM credit_users cu
-                LEFT JOIN credit_groups cg ON cu.group_id = cg.id
-                WHERE cu.id = ?
+                INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
+                VALUES (?, 'default')
             """, (user_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            conn.commit()
+            
+            # Get all group memberships (including default group)
+            cursor.execute("""
+                SELECT cg.id, cg.name, cg.default_credits, cg.is_system_group
+                FROM credit_groups cg
+                JOIN credit_user_groups cug ON cg.id = cug.group_id
+                WHERE cug.user_id = ?
+                ORDER BY cg.name
+            """, (user_id,))
+            
+            groups = [dict(row) for row in cursor.fetchall()]
+            user_data['groups'] = groups
+            
+            # Calculate total default credits from ALL groups (including system groups)
+            total_default_credits = sum(group['default_credits'] for group in groups)
+            user_data['total_default_credits'] = total_default_credits
+            
+            # For UI display, exclude system groups from group_name but include all credits in default_credits
+            display_groups = [g for g in groups if not g['is_system_group']]
+            if display_groups:
+                user_data['group_name'] = ', '.join([g['name'] for g in display_groups])
+            else:
+                user_data['group_name'] = None
+            
+            # Always include ALL group credits (including default/system groups) for reset logic
+            user_data['default_credits'] = total_default_credits
+            
+            return user_data
     
     def get_all_users_with_credits(self) -> List[Dict[str, Any]]:
-        """Get all users with their credit information"""
+        """Get all users with their credit information and group memberships"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            
+            # First, ensure ALL users are assigned to default group (everyone gets default group credits)
             cursor.execute("""
-                SELECT cu.*, cg.name as group_name, cg.default_credits
-                FROM credit_users cu
-                LEFT JOIN credit_groups cg ON cu.group_id = cg.id
-                ORDER BY cu.id
+                INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
+                SELECT u.id, 'default'
+                FROM credit_users u
             """)
-            return [dict(row) for row in cursor.fetchall()]
+            assigned_count = cursor.rowcount
+            conn.commit()
+            
+            if assigned_count > 0:
+                print(f"🔄 Ensured {assigned_count} users are assigned to default group")
+            
+            # Get all users
+            cursor.execute("SELECT * FROM credit_users ORDER BY id")
+            users = [dict(row) for row in cursor.fetchall()]
+            
+            # Get group memberships for all users
+            for user in users:
+                user_id = user['id']
+                cursor.execute("""
+                    SELECT cg.id, cg.name, cg.default_credits, cg.is_system_group
+                    FROM credit_groups cg
+                    JOIN credit_user_groups cug ON cg.id = cug.group_id
+                    WHERE cug.user_id = ?
+                    ORDER BY cg.name
+                """, (user_id,))
+                
+                groups = [dict(row) for row in cursor.fetchall()]
+                user['groups'] = groups
+                
+                # Calculate total default credits from ALL groups (including default/system groups)
+                total_default_credits = sum(group['default_credits'] for group in groups)
+                user['total_default_credits'] = total_default_credits
+                
+                # For UI display, exclude system groups from group_name
+                display_groups = [g for g in groups if not g['is_system_group']]
+                if display_groups:
+                    user['group_name'] = ', '.join([g['name'] for g in display_groups])
+                else:
+                    user['group_name'] = None
+                
+                # Always include ALL group credits (including default/system groups) for reset logic
+                user['default_credits'] = total_default_credits
+            
+            return users
     
     def update_user_credits(self, user_id: str, new_balance: float, actor: str = "system", 
                            transaction_type: str = "update", reason: str = "") -> bool:
@@ -295,11 +452,11 @@ class CreditDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Update balance
+            # Update balance (create user if doesn't exist)
             cursor.execute("""
-                INSERT OR REPLACE INTO credit_users (id, balance, group_id, updated_at)
-                VALUES (?, ?, COALESCE((SELECT group_id FROM credit_users WHERE id = ?), 'default'), CURRENT_TIMESTAMP)
-            """, (user_id, new_balance, user_id))
+                INSERT OR REPLACE INTO credit_users (id, balance, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            """, (user_id, new_balance))
             
             # Log transaction
             cursor.execute("""
@@ -343,6 +500,221 @@ class CreditDatabase:
                 self.update_usage_statistics(user_id, deducted, model_id)
             
             return deducted, new_balance
+    
+    def add_user_to_group(self, user_id: str, group_id: str) -> bool:
+        """Add user to a group"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
+                VALUES (?, ?)
+            """, (user_id, group_id))
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    def remove_user_from_group(self, user_id: str, group_id: str) -> bool:
+        """Remove user from a group"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                DELETE FROM credit_user_groups
+                WHERE user_id = ? AND group_id = ?
+            """, (user_id, group_id))
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    def set_user_groups(self, user_id: str, group_ids: List[str]) -> bool:
+        """Set user's group memberships (replaces all existing memberships)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Remove all existing memberships
+            cursor.execute("DELETE FROM credit_user_groups WHERE user_id = ?", (user_id,))
+            
+            # Add new memberships
+            for group_id in group_ids:
+                cursor.execute("""
+                    INSERT INTO credit_user_groups (user_id, group_id)
+                    VALUES (?, ?)
+                """, (user_id, group_id))
+            
+            conn.commit()
+            return True
+    
+    def get_user_groups(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all groups for a user"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT cg.*
+                FROM credit_groups cg
+                JOIN credit_user_groups cug ON cg.id = cug.group_id
+                WHERE cug.user_id = ?
+                ORDER BY cg.name
+            """, (user_id,))
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def assign_users_without_groups_to_default(self) -> int:
+        """Assign users without any group memberships to the default system group"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Find users without any group memberships
+            cursor.execute("""
+                SELECT u.id 
+                FROM credit_users u
+                LEFT JOIN credit_user_groups ug ON u.id = ug.user_id
+                WHERE ug.user_id IS NULL
+            """)
+            
+            users_without_groups = cursor.fetchall()
+            assigned_count = 0
+            
+            for user_row in users_without_groups:
+                user_id = user_row[0]
+                cursor.execute("""
+                    INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
+                    VALUES (?, 'default')
+                """, (user_id,))
+                if cursor.rowcount > 0:
+                    assigned_count += 1
+            
+            conn.commit()
+            
+            if assigned_count > 0:
+                self.log_action("auto_assign_default_group", "system", 
+                              f"Assigned {assigned_count} users without groups to default group")
+            
+            return assigned_count
+    
+    def sync_groups_from_openwebui(self) -> int:
+        """Sync groups from OpenWebUI database and return number of groups synced"""
+        try:
+            with sqlite3.connect(DB_FILE) as openwebui_conn:
+                openwebui_conn.row_factory = sqlite3.Row
+                cursor = openwebui_conn.cursor()
+                cursor.execute("SELECT id, name, description FROM 'group'")
+                openwebui_groups = cursor.fetchall()
+            
+            synced_count = 0
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                for group in openwebui_groups:
+                    group_id = group["id"]
+                    group_name = group["name"] or group_id
+                    
+                    # Check if group exists
+                    cursor.execute("SELECT id FROM credit_groups WHERE id = ?", (group_id,))
+                    exists = cursor.fetchone()
+                    
+                    if not exists:
+                        # Create new group with default 1000 credits (OpenWebUI groups are not system groups)
+                        cursor.execute("""
+                            INSERT INTO credit_groups (id, name, default_credits, is_system_group)
+                            VALUES (?, ?, ?, 0)
+                        """, (group_id, group_name, 1000.0))
+                        synced_count += 1
+                        print(f"✅ Created new group: {group_name} ({group_id})")
+                    else:
+                        # Update group name if needed, but preserve is_system_group flag
+                        cursor.execute("""
+                            UPDATE credit_groups SET name = ? WHERE id = ?
+                        """, (group_name, group_id))
+                
+                conn.commit()
+            
+            if synced_count > 0:
+                self.log_action("group_sync", "system", f"Synced {synced_count} groups from OpenWebUI")
+            
+            return synced_count
+            
+        except Exception as e:
+            print(f"Error syncing groups from OpenWebUI: {e}")
+            self.log_action("group_sync_error", "system", f"Failed to sync groups: {str(e)}")
+            return 0
+    
+    def sync_user_groups_from_openwebui(self, user_id: str) -> bool:
+        """Sync a specific user's group memberships from OpenWebUI"""
+        try:
+            with sqlite3.connect(DB_FILE) as openwebui_conn:
+                openwebui_conn.row_factory = sqlite3.Row
+                cursor = openwebui_conn.cursor()
+                
+                # Get all groups where this user is a member
+                cursor.execute("SELECT id, user_ids FROM 'group'")
+                groups = cursor.fetchall()
+                
+                user_group_ids = []
+                for group in groups:
+                    if group["user_ids"]:
+                        try:
+                            user_ids = json.loads(group["user_ids"])
+                            if user_id in user_ids:
+                                user_group_ids.append(group["id"])
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                
+                # Update user's group memberships
+                self.set_user_groups(user_id, user_group_ids)
+                
+                return True
+                
+        except Exception as e:
+            print(f"Error syncing user groups for {user_id}: {e}")
+            return False
+    
+    def sync_all_user_groups_from_openwebui(self) -> int:
+        """Sync all user group memberships from OpenWebUI"""
+        try:
+            with sqlite3.connect(DB_FILE) as openwebui_conn:
+                openwebui_conn.row_factory = sqlite3.Row
+                cursor = openwebui_conn.cursor()
+                
+                # Get all groups with their user lists
+                cursor.execute("SELECT id, user_ids FROM 'group'")
+                groups = cursor.fetchall()
+                
+                # Build user -> groups mapping
+                user_groups_map: Dict[str, List[str]] = {}
+                for group in groups:
+                    group_id = group["id"]
+                    if group["user_ids"]:
+                        try:
+                            user_ids = json.loads(group["user_ids"])
+                            for user_id in user_ids:
+                                if user_id not in user_groups_map:
+                                    user_groups_map[user_id] = []
+                                user_groups_map[user_id].append(group_id)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                
+                # Update memberships for all users
+                synced_count = 0
+                with self.get_connection() as conn:
+                    cursor = conn.cursor()
+                    
+                    # Clear all existing memberships
+                    cursor.execute("DELETE FROM credit_user_groups")
+                    
+                    # Add new memberships
+                    for user_id, group_ids in user_groups_map.items():
+                        for group_id in group_ids:
+                            cursor.execute("""
+                                INSERT INTO credit_user_groups (user_id, group_id)
+                                VALUES (?, ?)
+                            """, (user_id, group_id))
+                        synced_count += 1
+                    
+                    conn.commit()
+                
+                self.log_action("user_groups_sync", "system", f"Synced group memberships for {synced_count} users")
+                return synced_count
+                
+        except Exception as e:
+            print(f"Error syncing all user groups: {e}")
+            self.log_action("user_groups_sync_error", "system", f"Failed to sync user groups: {str(e)}")
+            return 0
     
     # Model operations
     def get_model_pricing(self, model_id: str) -> Optional[Dict[str, Any]]:
@@ -393,6 +765,17 @@ class CreditDatabase:
             conn.commit()
             return cursor.rowcount > 0
 
+    def update_model_name(self, model_id: str, name: str) -> bool:
+        """Update model name only"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE credit_models SET name = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (name, model_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
     def update_model_pricing(self, model_id: str, name: str, context_price: float, 
                            generation_price: float, is_available: bool = True, is_free: bool = False, is_restricted: bool = False) -> bool:
         """Update model pricing, availability status, free status, and restriction status"""
@@ -413,14 +796,14 @@ class CreditDatabase:
             cursor.execute("SELECT * FROM credit_groups ORDER BY name")
             return [dict(row) for row in cursor.fetchall()]
     
-    def update_group(self, group_id: str, name: str, default_credits: float) -> bool:
+    def update_group(self, group_id: str, name: str, default_credits: float, is_system_group: bool = False) -> bool:
         """Update group information"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT OR REPLACE INTO credit_groups (id, name, default_credits, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            """, (group_id, name, default_credits))
+                INSERT OR REPLACE INTO credit_groups (id, name, default_credits, is_system_group, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (group_id, name, default_credits, is_system_group))
             conn.commit()
             return True
     
@@ -816,12 +1199,20 @@ class CreditDatabase:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Get all users with their group default credits
+                # Before reset, assign users without groups to default group
+                assigned_count = self.assign_users_without_groups_to_default()
+                if assigned_count > 0:
+                    print(f"🔄 Assigned {assigned_count} users without groups to default group")
+                
+                # Get ALL users with their total default credits from all groups (including system groups with 0 credits)
                 cursor.execute("""
-                    SELECT u.id, u.balance, u.group_id, g.default_credits
+                    SELECT u.id, u.balance,
+                           COALESCE(SUM(g.default_credits), 0) as total_default_credits,
+                           GROUP_CONCAT(g.name) as group_names
                     FROM credit_users u
-                    LEFT JOIN credit_groups g ON u.group_id = g.id
-                    WHERE g.default_credits IS NOT NULL
+                    LEFT JOIN credit_user_groups ug ON u.id = ug.user_id
+                    LEFT JOIN credit_groups g ON ug.group_id = g.id
+                    GROUP BY u.id, u.balance
                 """)
                 
                 users_to_reset = cursor.fetchall()
@@ -838,8 +1229,8 @@ class CreditDatabase:
                 for user in users_to_reset:
                     user_id = user[0]
                     current_balance = user[1]
-                    group_id = user[2]
-                    default_credits = user[3]
+                    total_default_credits = user[2]
+                    group_names = user[3] or "No groups"
                     
                     # Update previous month's statistics with final balance before reset
                     cursor.execute("""
@@ -848,30 +1239,29 @@ class CreditDatabase:
                         WHERE user_id = ? AND year = ? AND month = ?
                     """, (current_balance, user_id, previous_year, previous_month))
                     
-                    if default_credits > 0:
-                        # Update user balance
-                        cursor.execute("""
-                            UPDATE credit_users 
-                            SET balance = ?, updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        """, (default_credits, user_id))
-                        
-                        # Record transaction
-                        cursor.execute("""
-                            INSERT INTO credit_transactions 
-                            (user_id, amount, transaction_type, reason, actor, balance_after)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        """, (
-                            user_id,
-                            default_credits - current_balance,
-                            'monthly_reset',
-                            f'Monthly reset for group {group_id}',
-                            'system',
-                            default_credits
-                        ))
-                        
-                        users_affected += 1
-                        total_credits_reset += default_credits
+                    # Update user balance to sum of all group default credits
+                    cursor.execute("""
+                        UPDATE credit_users 
+                        SET balance = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    """, (total_default_credits, user_id))
+                    
+                    # Record transaction
+                    cursor.execute("""
+                        INSERT INTO credit_transactions 
+                        (user_id, amount, transaction_type, reason, actor, balance_after)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
+                        user_id,
+                        total_default_credits - current_balance,
+                        'monthly_reset',
+                        f'Monthly reset for groups: {group_names}',
+                        'system',
+                        total_default_credits
+                    ))
+                    
+                    users_affected += 1
+                    total_credits_reset += total_default_credits
                 
                 conn.commit()
                 
@@ -1014,30 +1404,27 @@ class CreditDatabase:
             
             if year and month:
                 cursor.execute("""
-                    SELECT u.*, cu.balance as current_balance, cg.name as group_name
+                    SELECT u.*, cu.balance as current_balance
                     FROM credit_usage_statistics u
                     LEFT JOIN credit_users cu ON u.user_id = cu.id
-                    LEFT JOIN credit_groups cg ON cu.group_id = cg.id
                     WHERE u.year = ? AND u.month = ?
                     ORDER BY u.credits_used DESC
                     LIMIT ?
                 """, (year, month, limit))
             elif year:
                 cursor.execute("""
-                    SELECT u.*, cu.balance as current_balance, cg.name as group_name
+                    SELECT u.*, cu.balance as current_balance
                     FROM credit_usage_statistics u
                     LEFT JOIN credit_users cu ON u.user_id = cu.id
-                    LEFT JOIN credit_groups cg ON cu.group_id = cg.id
                     WHERE u.year = ?
                     ORDER BY u.year DESC, u.month DESC, u.credits_used DESC
                     LIMIT ?
                 """, (year, limit))
             else:
                 cursor.execute("""
-                    SELECT u.*, cu.balance as current_balance, cg.name as group_name
+                    SELECT u.*, cu.balance as current_balance
                     FROM credit_usage_statistics u
                     LEFT JOIN credit_users cu ON u.user_id = cu.id
-                    LEFT JOIN credit_groups cg ON cu.group_id = cg.id
                     ORDER BY u.year DESC, u.month DESC, u.credits_used DESC
                     LIMIT ?
                 """, (limit,))
@@ -1052,6 +1439,21 @@ class CreditDatabase:
                         result['models_used'] = []
                 else:
                     result['models_used'] = []
+                
+                # Get group names for this user
+                user_id = result['user_id']
+                cursor.execute("""
+                    SELECT cg.name
+                    FROM credit_groups cg
+                    JOIN credit_user_groups cug ON cg.id = cug.group_id
+                    WHERE cug.user_id = ?
+                    ORDER BY cg.name
+                """, (user_id,))
+                
+                group_rows = cursor.fetchall()
+                group_names = [row[0] for row in group_rows]
+                result['group_name'] = ', '.join(group_names) if group_names else 'No groups'
+                
                 results.append(result)
             return results
 

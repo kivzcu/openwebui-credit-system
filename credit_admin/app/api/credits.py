@@ -6,6 +6,7 @@ import fcntl
 from datetime import datetime, timezone
 from .credit_logic import calculate_and_deduct
 from ..config import CREDITS_FILE, MODELS_FILE, GROUPS_FILE, DB_FILE, LOG_FILE, TRANSACTION_LOG_FILE
+from ..database import CreditDatabase
 
 router = APIRouter()
 
@@ -23,74 +24,60 @@ def append_log_entry(entry):
 # -------------------------------
 @router.get("/api/credits/users", tags=["credits"])
 def get_users_with_credits():
-    """Vrací seznam uživatelů s kredity pro Credit Management UI."""
-    # Načíst kredity
-    if os.path.exists(CREDITS_FILE):
-        with open(CREDITS_FILE, 'r') as f:
-            credits_data = json.load(f)
-    else:
-        credits_data = {"users": {}}
-
-    # Načíst skupiny
-    if os.path.exists(GROUPS_FILE):
-        with open(GROUPS_FILE, 'r') as f:
-            groups_data = json.load(f)
-    else:
-        groups_data = {}
-
-    # Připojit k databázi
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
+    """Returns list of users with credits for Credit Management UI using new database system."""
     try:
-        cursor.execute("SELECT id, name, email FROM user")
-        users_data = cursor.fetchall()
+        db = CreditDatabase()
+        users = db.get_all_users_with_credits()
+        
+        # Format for the UI - maintain backward compatibility
+        result = []
+        for user in users:
+            # Format groups for display (excluding system groups)
+            display_groups = [g for g in user.get('groups', []) if not g.get('is_system_group', False)]
+            group_name = ', '.join([g['name'] for g in display_groups]) if display_groups else None
+            
+            result.append({
+                "id": user["id"],
+                "name": user.get("name", ""),
+                "email": user.get("email", ""),
+                "credits": user.get("balance", 0),
+                "total_default_credits": user.get("total_default_credits", 0),
+                "groups": user.get("groups", []),
+                "group_name": group_name,
+                "default_credits": user.get("default_credits", 0),
+                "role": group_name or "",  # Backward compatibility
+                "avatar": f"https://i.pravatar.cc/36?u={user.get('email', '') or user.get('name', '')}"
+            })
+        
+        return result
+        
     except Exception as e:
-        conn.close()
         return {"error": str(e)}
-
-    conn.close()
-
-    # Složit výsledek
-    result = []
-    for user_id, name, email in users_data:
-        user_credits = credits_data['users'].get(user_id, {})
-        balance = user_credits.get('balance', 0)
-        group_id = user_credits.get('group')
-        group_name = groups_data.get(group_id, {}).get("name") if group_id else None
-
-        result.append({
-            "id": user_id,
-            "name": name or "",
-            "email": email or "",
-            "credits": balance,
-            "role": group_name or "", 
-            "avatar": f"https://i.pravatar.cc/36?u={email or name}"
-        })
-
-    return result
 
 # -------------------------------
 # ENDPOINT PRO SEZNAM SKUPIN
 # -------------------------------
 @router.get("/api/credits/groups", tags=["credits"])
 def get_credit_groups():
-    """Vrací seznam skupin s výchozími kredity."""
-    if os.path.exists(GROUPS_FILE):
-        with open(GROUPS_FILE, 'r') as f:
-            groups_data = json.load(f)
-    else:
-        groups_data = {}
-
-    result = []
-    for group_id, group in groups_data.items():
-        result.append({
-            "id": group_id,
-            "name": group.get("name", ""),
-            "default_credits": group.get("default_credits")
-        })
-
-    return result
+    """Returns list of groups with default credits using new database system."""
+    try:
+        db = CreditDatabase()
+        groups = db.get_all_groups()
+        
+        # Filter out system groups for UI display
+        result = []
+        for group in groups:
+            if not group.get('is_system_group', False):
+                result.append({
+                    "id": group["id"],
+                    "name": group.get("name", ""),
+                    "default_credits": group.get("default_credits", 0)
+                })
+        
+        return result
+        
+    except Exception as e:
+        return {"error": str(e)}
 
 # -------------------------------
 # ENDPOINT PRO SEZNAM MODELŮ

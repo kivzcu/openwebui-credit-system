@@ -774,22 +774,32 @@ async function renderUsersView() {
     let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
       <thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850">
         <tr>
-          <th class="px-3 py-1.5">Group</th>
+          <th class="px-3 py-1.5">Groups</th>
           <th class="px-3 py-1.5">Name</th>
           <th class="px-3 py-1.5">Email</th>
           <th class="px-3 py-1.5">Credits</th>
+          <th class="px-3 py-1.5">Default Credits</th>
           <th class="px-3 py-1.5 text-right">Actions</th>
         </tr>
       </thead>
       <tbody>`;
 
     for (const user of currentUsers) {
+      // Format groups display
+      let groupsDisplay = '';
+      if (user.groups && user.groups.length > 0) {
+        groupsDisplay = user.groups.map(group => `<span class="inline-block px-1 py-0.5 text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded mr-1">${escapeHtml(group.name)}</span>`).join('');
+      } else {
+        groupsDisplay = '<span class="text-gray-400 text-xs">No groups</span>';
+      }
+      
       table += `
         <tr class="bg-white dark:bg-gray-900 border-t cursor-pointer">
-          <td class="px-3 py-1 text-xs font-bold text-blue-600 dark:text-blue-300">${escapeHtml(user.role)}</td>
+          <td class="px-3 py-1">${groupsDisplay}</td>
           <td class="px-3 py-1">${escapeHtml(user.name)}</td>
           <td class="px-3 py-1">${escapeHtml(user.email)}</td>
           <td class="px-3 py-1">${user.credits}</td>
+          <td class="px-3 py-1 text-green-600 dark:text-green-400">${user.total_default_credits || 0}</td>
           <td class="px-3 py-1 text-right">
             <button type="button" class="px-2 py-1 text-sm bg-blue-600 text-white rounded edit-user-btn" data-user-id="${escapeHtml(user.id)}">Edit</button>
           </td>
@@ -810,7 +820,7 @@ async function renderUsersView() {
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
         <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
       </svg>
-      Sync Users from OpenWebUI
+      Sync All Data from OpenWebUI
     </button>
   </div>`;
 
@@ -971,18 +981,18 @@ async function syncUsersFromOpenWebUI(e) {
       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
       <path class="opacity-75" fill="currentColor" d="m12 2v4m0 12v4m10-10h-4M6 12H2"></path>
     </svg>
-    Syncing...
+    Syncing all data...
   `;
   button.disabled = true;
 
   try {
-    const res = await authenticatedFetch('/api/credits/sync-users', {
+    const res = await authenticatedFetch('/api/credits/sync-all', {
       method: 'POST'
     });
     
     const result = await res.json();
     if (result.status === 'success') {
-      notifications.success('Users synced successfully from OpenWebUI!');
+      notifications.success('All data synced successfully from OpenWebUI! Groups, users, models, and memberships updated.');
       renderUsersView(); // Refresh the user list
     } else {
       notifications.error(`Sync failed: ${result.message || 'Unknown error'}`);
@@ -1305,7 +1315,7 @@ async function renderModelsView() {
         
       table += `
         <tr class="${rowClass}">
-          <td class="px-3 py-1 ${nameClass}">${escapeHtml(model.name)}${freeBadge}</td>
+          <td class="px-3 py-1 ${nameClass} model-name-tooltip" data-tooltip="Model ID: ${escapeHtml(model.id)}">${escapeHtml(model.name)}${freeBadge}</td>
           <td class="px-3 py-1">${statusBadge}</td>
           <td class="px-3 py-1 ${priceClass}">
             ${priceDisplay}
@@ -1331,19 +1341,15 @@ async function renderModelsView() {
     const summaryHtml = `
       <div class="flex items-center gap-4 mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
         <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="public" title="Click to show only public models">
-          <span class="w-3 h-3 bg-gray-400 rounded-full"></span>
           <span class="text-sm">🟢 <strong>${publicCount}</strong> Public</span>
         </div>
         <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="restricted" title="Click to show only restricted models">
-          <span class="w-3 h-3 bg-orange-400 rounded-full"></span>
           <span class="text-sm">🟡 <strong>${restrictedCount}</strong> Restricted</span>
         </div>
         <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="private" title="Click to show only private models">
-          <span class="w-3 h-3 bg-red-400 rounded-full"></span>
           <span class="text-sm">🔴 <strong>${privateCount}</strong> Private</span>
         </div>
         <div class="legend-item flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="free" title="Click to show only free models">
-          <span class="w-3 h-3 bg-blue-400 rounded-full"></span>
           <span class="text-sm">🆓 <strong>${freeCount}</strong> Free</span>
         </div>
         <div class="legend-item text-sm text-gray-500 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-2 py-1 rounded transition-colors filter-status-btn" data-status="all" title="Click to show all models">

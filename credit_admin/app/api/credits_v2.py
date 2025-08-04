@@ -66,9 +66,11 @@ async def get_user_credits(user_id: str, _: bool = Depends(verify_api_key)):
     return {
         "id": user_data["id"],
         "credits": user_data["balance"],
-        "group_id": user_data["group_id"],
+        "groups": user_data.get("groups", []),  # New field with all groups
         "group_name": user_data.get("group_name"),
-        "default_credits": user_data.get("default_credits", 0)
+        "default_credits": user_data.get("default_credits", 0),
+        # For backward compatibility, include group_id as the first group's ID
+        "group_id": user_data.get("groups", [{}])[0].get("id") if user_data.get("groups") else None
     }
 
 @router.get("/api/credits/model/{model_id:path}", tags=["credits"])
@@ -172,13 +174,26 @@ async def get_all_users_with_credits(current_user: User = Depends(get_current_ad
     result = []
     for user in users:
         openwebui_info = openwebui_users.get(user["id"], {})
+        
+        # Extract group information from the new structure
+        groups = user.get("groups", [])
+        if groups:
+            # For backward compatibility, use the first group as primary
+            primary_group_id = groups[0]["id"]
+            group_names = user.get("group_name", "Unknown")  # This is already a comma-separated string
+        else:
+            primary_group_id = None
+            group_names = "No groups"
+        
         result.append({
             "id": user["id"],
             "name": openwebui_info.get("name", "Unknown"),
             "email": openwebui_info.get("email", ""),
             "credits": user["balance"],
-            "group_id": user["group_id"],
-            "role": user.get("group_name", "Unknown"),
+            "total_default_credits": user.get("total_default_credits", 0),  # Add this field for frontend
+            "group_id": primary_group_id,  # For backward compatibility
+            "groups": groups,  # New field with all groups
+            "role": group_names,
             "avatar": f"https://i.pravatar.cc/36?u={openwebui_info.get('email', user['id'])}"
         })
     
@@ -540,10 +555,11 @@ async def sync_models_from_openwebui():
                         is_restricted = False
                 
                 if model_id in local_model_ids:
-                    # Update existing model availability and restriction status
+                    # Update existing model availability, restriction status, and name
                     availability_updated = db.update_model_availability(model_id, is_available)
                     restriction_updated = db.update_model_restriction_status(model_id, is_restricted)
-                    if availability_updated or restriction_updated:
+                    name_updated = db.update_model_name(model_id, model_name)
+                    if availability_updated or restriction_updated or name_updated:
                         updated_count += 1
                 else:
                     # Create new model with availability and restriction status
@@ -608,10 +624,25 @@ async def sync_all_users_from_openwebui():
         return 0
 
 async def sync_all_from_openwebui():
-    """Sync both users and models from OpenWebUI database"""
+    """Sync users, models, and groups from OpenWebUI database"""
+    # First sync groups
+    group_count = db.sync_groups_from_openwebui()
+    
+    # Then sync users
     user_count = await sync_all_users_from_openwebui()
+    
+    # Then sync models
     model_count = await sync_models_from_openwebui()
-    return {"users": user_count, "models": model_count}
+    
+    # Finally sync user-group memberships
+    user_groups_count = db.sync_all_user_groups_from_openwebui()
+    
+    return {
+        "users": user_count, 
+        "models": model_count, 
+        "groups": group_count,
+        "user_groups": user_groups_count
+    }
 
 # Manual sync endpoint
 @router.post("/api/credits/sync-users", tags=["admin"])
@@ -623,6 +654,26 @@ async def manual_sync_users(current_user: User = Depends(get_current_admin_user)
         return {"status": "success", "message": f"Synced {count} users successfully"}
     except Exception as e:
         return {"status": "error", "message": f"User sync failed: {str(e)}"}
+
+@router.post("/api/credits/sync-groups", tags=["admin"])
+async def manual_sync_groups(current_user: User = Depends(get_current_admin_user)):
+    """Manually trigger group sync from OpenWebUI database"""
+    try:
+        count = db.sync_groups_from_openwebui()
+        db.log_action("manual_sync", "admin", f"Manual group sync triggered - synced {count} groups")
+        return {"status": "success", "message": f"Synced {count} groups successfully"}
+    except Exception as e:
+        return {"status": "error", "message": f"Group sync failed: {str(e)}"}
+
+@router.post("/api/credits/sync-user-groups", tags=["admin"])
+async def manual_sync_user_groups(current_user: User = Depends(get_current_admin_user)):
+    """Manually trigger user-group membership sync from OpenWebUI database"""
+    try:
+        count = db.sync_all_user_groups_from_openwebui()
+        db.log_action("manual_sync", "admin", f"Manual user-groups sync triggered - synced {count} user memberships")
+        return {"status": "success", "message": f"Synced group memberships for {count} users successfully"}
+    except Exception as e:
+        return {"status": "error", "message": f"User-groups sync failed: {str(e)}"}
 
 @router.post("/api/credits/sync-models", tags=["admin"])
 async def manual_sync_models(current_user: User = Depends(get_current_admin_user)):
@@ -636,14 +687,14 @@ async def manual_sync_models(current_user: User = Depends(get_current_admin_user
 
 @router.post("/api/credits/sync-all", tags=["admin"])
 async def manual_sync_all(current_user: User = Depends(get_current_admin_user)):
-    """Manually trigger full sync of users and models from OpenWebUI database"""
+    """Manually trigger full sync of users, models, groups, and user-group memberships from OpenWebUI database"""
     try:
         result = await sync_all_from_openwebui()
-        total = result["users"] + result["models"]
-        db.log_action("manual_sync", "admin", f"Manual full sync triggered - synced {result['users']} users and {result['models']} models")
+        total = result["users"] + result["models"] + result["groups"]
+        db.log_action("manual_sync", "admin", f"Manual full sync triggered - synced {result['users']} users, {result['models']} models, {result['groups']} groups, and {result['user_groups']} user memberships")
         return {
             "status": "success", 
-            "message": f"Synced {result['users']} users and {result['models']} models successfully",
+            "message": f"Synced {result['users']} users, {result['models']} models, {result['groups']} groups, and group memberships for {result['user_groups']} users successfully",
             "details": result
         }
     except Exception as e:
