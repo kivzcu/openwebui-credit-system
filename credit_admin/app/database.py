@@ -175,9 +175,25 @@ class CreditDatabase:
                     model_id TEXT,  -- optional, for model-specific charges
                     prompt_tokens INTEGER,  -- optional, for token tracking
                     completion_tokens INTEGER,  -- optional, for token tracking
+                    cached_tokens INTEGER,  -- optional, for cached token tracking
+                    reasoning_tokens INTEGER,  -- optional, for reasoning token tracking
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # Add cached_tokens column if it doesn't exist (migration)
+            try:
+                cursor.execute("ALTER TABLE credit_transactions ADD COLUMN cached_tokens INTEGER")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+                
+            # Add reasoning_tokens column if it doesn't exist (migration)
+            try:
+                cursor.execute("ALTER TABLE credit_transactions ADD COLUMN reasoning_tokens INTEGER")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
             
             # System logs
             cursor.execute("""
@@ -708,7 +724,8 @@ class CreditDatabase:
                     
                     conn.commit()
                 
-                self.log_action("user_groups_sync", "system", f"Synced group memberships for {synced_count} users")
+                # Commented out to reduce log clutter - routine sync operation
+                # self.log_action("user_groups_sync", "system", f"Synced group memberships for {synced_count} users")
                 return synced_count
                 
         except Exception as e:
@@ -808,30 +825,67 @@ class CreditDatabase:
             return True
     
     # Transaction history
-    def get_user_transactions(self, user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get user's transaction history"""
+    def get_user_transactions(self, user_id: str, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """Get user's transaction history with pagination"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            
+            # Get total count
+            cursor.execute("""
+                SELECT COUNT(*) as total
+                FROM credit_transactions ct
+                WHERE ct.user_id = ?
+            """, (user_id,))
+            total = cursor.fetchone()['total']
+            
+            # Get paginated results
             cursor.execute("""
                 SELECT ct.*
                 FROM credit_transactions ct
                 WHERE ct.user_id = ? 
                 ORDER BY ct.created_at DESC 
-                LIMIT ?
-            """, (user_id, limit))
-            return [dict(row) for row in cursor.fetchall()]
+                LIMIT ? OFFSET ?
+            """, (user_id, limit, offset))
+            transactions = [dict(row) for row in cursor.fetchall()]
+            
+            return {
+                'transactions': transactions,
+                'total': total,
+                'limit': limit,
+                'offset': offset,
+                'has_next': offset + limit < total,
+                'has_prev': offset > 0
+            }
     
-    def get_all_transactions(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get all transactions"""
+    def get_all_transactions(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """Get all transactions with pagination"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            
+            # Get total count
+            cursor.execute("""
+                SELECT COUNT(*) as total
+                FROM credit_transactions ct
+            """)
+            total = cursor.fetchone()['total']
+            
+            # Get paginated results
             cursor.execute("""
                 SELECT ct.*
                 FROM credit_transactions ct
                 ORDER BY ct.created_at DESC 
-                LIMIT ?
-            """, (limit,))
-            return [dict(row) for row in cursor.fetchall()]
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            transactions = [dict(row) for row in cursor.fetchall()]
+            
+            return {
+                'transactions': transactions,
+                'total': total,
+                'limit': limit,
+                'offset': offset,
+                'has_next': offset + limit < total,
+                'has_prev': offset > 0
+            }
     
     # Logging
     def log_action(self, log_type: str, actor: str, message: str, metadata: Optional[Dict] = None):
@@ -844,16 +898,34 @@ class CreditDatabase:
             """, (log_type, actor, message, json.dumps(metadata) if metadata else None))
             conn.commit()
     
-    def get_logs(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get system logs"""
+    def get_logs(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """Get system logs with pagination"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            
+            # Get total count
+            cursor.execute("""
+                SELECT COUNT(*) as total
+                FROM credit_logs
+            """)
+            total = cursor.fetchone()['total']
+            
+            # Get paginated results
             cursor.execute("""
                 SELECT * FROM credit_logs 
                 ORDER BY created_at DESC 
-                LIMIT ?
-            """, (limit,))
-            return [dict(row) for row in cursor.fetchall()]
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            logs = [dict(row) for row in cursor.fetchall()]
+            
+            return {
+                'logs': logs,
+                'total': total,
+                'limit': limit,
+                'offset': offset,
+                'has_next': offset + limit < total,
+                'has_prev': offset > 0
+            }
     
     def delete_log_entry(self, log_id: int) -> bool:
         """Delete a specific log entry by ID"""

@@ -366,48 +366,48 @@ async def update_group_credits(request: GroupUpdateRequest, current_user: User =
 
 # Transaction history and logs
 @router.get("/api/credits/user/{user_id}/transactions", tags=["credits"])
-async def get_user_transaction_history(user_id: str, limit: int = Query(100, ge=1, le=1000), current_user: User = Depends(get_current_admin_user)):
-    """Get user's transaction history with user name - Admin only"""
-    transactions = db.get_user_transactions(user_id, limit)
+async def get_user_transaction_history(user_id: str, limit: int = Query(50, ge=1, le=1000), offset: int = Query(0, ge=0), current_user: User = Depends(get_current_admin_user)):
+    """Get user's transaction history with user name and pagination - Admin only"""
+    result = db.get_user_transactions(user_id, limit, offset)
     
     # Get user name once since all transactions belong to the same user
-    if transactions:
+    if result['transactions']:
         users_info = db.get_users_info_from_openwebui([user_id])
         user_info = users_info.get(user_id, {})
         user_name = user_info.get('name') if user_info.get('name') else user_info.get('email')
         
         # Add user name to all transactions
-        for transaction in transactions:
+        for transaction in result['transactions']:
             transaction['user_name'] = user_name
     
-    return {"transactions": transactions}
+    return result
 
 @router.get("/api/credits/transactions", tags=["credits"])
-async def get_all_transactions(limit: int = Query(100, ge=1, le=1000), current_user: User = Depends(get_current_admin_user)):
-    """Get all transactions with user names (optimized) - Admin only"""
-    transactions = db.get_all_transactions(limit)
+async def get_all_transactions(limit: int = Query(50, ge=1, le=1000), offset: int = Query(0, ge=0), current_user: User = Depends(get_current_admin_user)):
+    """Get all transactions with user names and pagination (optimized) - Admin only"""
+    result = db.get_all_transactions(limit, offset)
     
-    if not transactions:
-        return {"transactions": []}
+    if not result['transactions']:
+        return result
     
     # Get all unique user IDs from transactions
-    user_ids = list(set(t['user_id'] for t in transactions))
+    user_ids = list(set(t['user_id'] for t in result['transactions']))
     
     # Fetch all user names in one query using the reusable method
     users_info = db.get_users_info_from_openwebui(user_ids)
     
     # Add user names to transactions
-    for transaction in transactions:
+    for transaction in result['transactions']:
         user_info = users_info.get(transaction['user_id'], {})
         transaction['user_name'] = user_info.get('name') if user_info.get('name') else user_info.get('email')
     
-    return {"transactions": transactions}
+    return result
 
 @router.get("/api/credits/system-logs", tags=["logs"])
-async def get_system_logs(limit: int = Query(100, ge=1, le=1000), current_user: User = Depends(get_current_admin_user)):
-    """Get system logs"""
-    logs = db.get_logs(limit)
-    return {"logs": logs}
+async def get_system_logs(limit: int = Query(50, ge=1, le=1000), offset: int = Query(0, ge=0), current_user: User = Depends(get_current_admin_user)):
+    """Get system logs with pagination"""
+    result = db.get_logs(limit, offset)
+    return result
 
 # Public endpoint for model pricing
 @router.get("/api/public/models/pricing", tags=["public"])

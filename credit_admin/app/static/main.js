@@ -544,9 +544,17 @@ function selectView(view) {
       renderModelsView();
       break;
     case 'systemLogs':
+      // Reset pagination state when switching to this view
+      if (!window.systemLogsPagination || window.systemLogsPagination.reset !== false) {
+        window.systemLogsPagination = { offset: 0, limit: 50, reset: false };
+      }
       renderSystemLogsView();
       break;
     case 'transactionLogs':
+      // Reset pagination state when switching to this view
+      if (!window.transactionLogsPagination || window.transactionLogsPagination.reset !== false) {
+        window.transactionLogsPagination = { offset: 0, limit: 50, reset: false };
+      }
       renderTransactionLogsView();
       break;
     case 'settings':
@@ -1691,20 +1699,65 @@ function getRefreshIconSVG() {
 
 async function renderSystemLogsView() {
   const container = document.getElementById('mainContent');
-  container.innerHTML = `
+  
+  // Store pagination state
+  if (!window.systemLogsPagination) {
+    window.systemLogsPagination = { offset: 0, limit: 50 };
+  }
+  
+  const { offset, limit } = window.systemLogsPagination;
+  
+  // Remove any existing event listeners by cloning the container
+  const newContainer = container.cloneNode(false);
+  container.parentNode.replaceChild(newContainer, container);
+  const updatedContainer = document.getElementById('mainContent');
+  
+  updatedContainer.innerHTML = `
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-2xl font-bold">System Logs</h2>
-      <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors flex items-center gap-2 refresh-system-logs-btn" title="Refresh logs">
-        ${getRefreshIconSVG()}
-        Refresh
-      </button>
+      <div class="flex items-center gap-2">
+        <select id="systemLogsPageSize" class="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-sm">
+          <option value="25" ${limit === 25 ? 'selected' : ''}>25 per page</option>
+          <option value="50" ${limit === 50 ? 'selected' : ''}>50 per page</option>
+          <option value="100" ${limit === 100 ? 'selected' : ''}>100 per page</option>
+        </select>
+        <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors flex items-center gap-2 refresh-system-logs-btn" title="Refresh logs">
+          ${getRefreshIconSVG()}
+          Refresh
+        </button>
+      </div>
     </div>
+    <div id="systemLogsContent">Loading...</div>
   `;
 
   try {
-    const res = await authenticatedFetch('/api/credits/system-logs');
+    const res = await authenticatedFetch(`/api/credits/system-logs?limit=${limit}&offset=${offset}`);
     const data = await res.json();
     const logs = data.logs || [];
+    const total = data.total || 0;
+    const hasNext = data.has_next || false;
+    const hasPrev = data.has_prev || false;
+
+    let content = '';
+    
+    // Pagination info
+    const startRecord = offset + 1;
+    const endRecord = Math.min(offset + limit, total);
+    content += `
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-sm text-gray-600 dark:text-gray-400">
+          Showing ${startRecord}-${endRecord} of ${total} log entries
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="systemLogsPrevBtn" class="px-3 py-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" ${!hasPrev ? 'disabled' : ''}>
+            Previous
+          </button>
+          <button id="systemLogsNextBtn" class="px-3 py-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" ${!hasNext ? 'disabled' : ''}>
+            Next
+          </button>
+        </div>
+      </div>
+    `;
 
     let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
       <thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850">
@@ -1729,40 +1782,87 @@ async function renderSystemLogsView() {
     }
 
     table += '</tbody></table>';
-    container.innerHTML += table;
+    content += table;
     
-    // Add event listener for refresh button
-    container.addEventListener('click', (e) => {
-      if (e.target.classList.contains('refresh-system-logs-btn')) {
+    document.getElementById('systemLogsContent').innerHTML = content;
+    
+    // Add single event listener using event delegation
+    updatedContainer.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      if (e.target.classList.contains('refresh-system-logs-btn') || e.target.closest('.refresh-system-logs-btn')) {
+        window.systemLogsPagination.offset = 0; // Reset to first page
+        renderSystemLogsView();
+      } else if (e.target.id === 'systemLogsPrevBtn' && !e.target.disabled) {
+        window.systemLogsPagination.offset = Math.max(0, window.systemLogsPagination.offset - window.systemLogsPagination.limit);
+        renderSystemLogsView();
+      } else if (e.target.id === 'systemLogsNextBtn' && !e.target.disabled) {
+        window.systemLogsPagination.offset = window.systemLogsPagination.offset + window.systemLogsPagination.limit;
         renderSystemLogsView();
       }
     });
+    
+    // Page size change listener
+    const pageSizeSelect = document.getElementById('systemLogsPageSize');
+    if (pageSizeSelect) {
+      pageSizeSelect.addEventListener('change', function(e) {
+        e.preventDefault();
+        window.systemLogsPagination.limit = parseInt(e.target.value);
+        window.systemLogsPagination.offset = 0; // Reset to first page
+        renderSystemLogsView();
+      });
+    }
     
   } catch (err) {
     if (err instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    container.innerHTML += `<p class="text-red-500">Error loading system logs: ${escapeHtml(err.message)}</p>`;
+    document.getElementById('systemLogsContent').innerHTML = `<p class="text-red-500">Error loading system logs: ${escapeHtml(err.message)}</p>`;
   }
 }
 
 async function renderTransactionLogsView() {
   const container = document.getElementById('mainContent');
-  container.innerHTML = `
+  
+  // Store pagination state
+  if (!window.transactionLogsPagination) {
+    window.transactionLogsPagination = { offset: 0, limit: 50 };
+  }
+  
+  const { offset, limit } = window.transactionLogsPagination;
+  
+  // Remove any existing event listeners by cloning the container
+  const newContainer = container.cloneNode(false);
+  container.parentNode.replaceChild(newContainer, container);
+  const updatedContainer = document.getElementById('mainContent');
+  
+  updatedContainer.innerHTML = `
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-2xl font-bold">Transaction Logs</h2>
-      <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors flex items-center gap-2 refresh-transaction-logs-btn" title="Refresh logs">
-        ${getRefreshIconSVG()}
-        Refresh
-      </button>
+      <div class="flex items-center gap-2">
+        <select id="transactionLogsPageSize" class="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-sm">
+          <option value="25" ${limit === 25 ? 'selected' : ''}>25 per page</option>
+          <option value="50" ${limit === 50 ? 'selected' : ''}>50 per page</option>
+          <option value="100" ${limit === 100 ? 'selected' : ''}>100 per page</option>
+        </select>
+        <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors flex items-center gap-2 refresh-transaction-logs-btn" title="Refresh logs">
+          ${getRefreshIconSVG()}
+          Refresh
+        </button>
+      </div>
     </div>
+    <div id="transactionLogsContent">Loading...</div>
   `;
 
   try {
-    const res = await authenticatedFetch('/api/credits/transactions');
+    const res = await authenticatedFetch(`/api/credits/transactions?limit=${limit}&offset=${offset}`);
     const data = await res.json();
     const transactions = data.transactions || [];
+    const total = data.total || 0;
+    const hasNext = data.has_next || false;
+    const hasPrev = data.has_prev || false;
 
     // Add CSS for transaction type colors if not already added
     if (!document.getElementById('transactionTypeStyles')) {
@@ -1789,6 +1889,27 @@ async function renderTransactionLogsView() {
       `;
       document.head.appendChild(style);
     }
+
+    let content = '';
+    
+    // Pagination info
+    const startRecord = offset + 1;
+    const endRecord = Math.min(offset + limit, total);
+    content += `
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-sm text-gray-600 dark:text-gray-400">
+          Showing ${startRecord}-${endRecord} of ${total} transactions
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="transactionLogsPrevBtn" class="px-3 py-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" ${!hasPrev ? 'disabled' : ''}>
+            Previous
+          </button>
+          <button id="transactionLogsNextBtn" class="px-3 py-1 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed" ${!hasNext ? 'disabled' : ''}>
+            Next
+          </button>
+        </div>
+      </div>
+    `;
 
     let table = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400">
       <thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850">
@@ -1840,21 +1961,44 @@ async function renderTransactionLogsView() {
     }
 
     table += '</tbody></table>';
-    container.innerHTML += table;
+    content += table;
     
-    // Add event listener for refresh button
-    container.addEventListener('click', (e) => {
-      if (e.target.classList.contains('refresh-transaction-logs-btn')) {
+    document.getElementById('transactionLogsContent').innerHTML = content;
+    
+    // Add single event listener using event delegation
+    updatedContainer.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      if (e.target.classList.contains('refresh-transaction-logs-btn') || e.target.closest('.refresh-transaction-logs-btn')) {
+        window.transactionLogsPagination.offset = 0; // Reset to first page
+        renderTransactionLogsView();
+      } else if (e.target.id === 'transactionLogsPrevBtn' && !e.target.disabled) {
+        window.transactionLogsPagination.offset = Math.max(0, window.transactionLogsPagination.offset - window.transactionLogsPagination.limit);
+        renderTransactionLogsView();
+      } else if (e.target.id === 'transactionLogsNextBtn' && !e.target.disabled) {
+        window.transactionLogsPagination.offset = window.transactionLogsPagination.offset + window.transactionLogsPagination.limit;
         renderTransactionLogsView();
       }
     });
+    
+    // Page size change listener
+    const pageSizeSelect = document.getElementById('transactionLogsPageSize');
+    if (pageSizeSelect) {
+      pageSizeSelect.addEventListener('change', function(e) {
+        e.preventDefault();
+        window.transactionLogsPagination.limit = parseInt(e.target.value);
+        window.transactionLogsPagination.offset = 0; // Reset to first page
+        renderTransactionLogsView();
+      });
+    }
     
   } catch (err) {
     if (err instanceof AuthenticationError) {
       // Authentication error - user will already be redirected to login
       return;
     }
-    container.innerHTML += `<p class="text-red-500">Error loading transaction logs: ${escapeHtml(err.message)}</p>`;
+    document.getElementById('transactionLogsContent').innerHTML = `<p class="text-red-500">Error loading transaction logs: ${escapeHtml(err.message)}</p>`;
   }
 }
 
