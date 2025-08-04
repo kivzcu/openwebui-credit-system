@@ -376,13 +376,6 @@ class CreditDatabase:
 
             user_data = dict(user_row)
             
-            # Ensure user is always assigned to default group (system group)
-            cursor.execute("""
-                INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
-                VALUES (?, 'default')
-            """, (user_id,))
-            conn.commit()
-            
             # Get all group memberships (including default group)
             cursor.execute("""
                 SELECT cg.id, cg.name, cg.default_credits, cg.is_system_group
@@ -393,6 +386,19 @@ class CreditDatabase:
             """, (user_id,))
             
             groups = [dict(row) for row in cursor.fetchall()]
+            
+            # Ensure default group is always included (in memory)
+            default_group_exists = any(g['id'] == 'default' for g in groups)
+            if not default_group_exists:
+                # Get default group info and add it
+                cursor.execute("""
+                    SELECT id, name, default_credits, is_system_group
+                    FROM credit_groups WHERE id = 'default'
+                """)
+                default_group_row = cursor.fetchone()
+                if default_group_row:
+                    groups.append(dict(default_group_row))
+            
             user_data['groups'] = groups
             
             # Calculate total default credits from ALL groups (including system groups)
@@ -416,21 +422,17 @@ class CreditDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # First, ensure ALL users are assigned to default group (everyone gets default group credits)
-            cursor.execute("""
-                INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
-                SELECT u.id, 'default'
-                FROM credit_users u
-            """)
-            assigned_count = cursor.rowcount
-            conn.commit()
-            
-            if assigned_count > 0:
-                print(f"🔄 Ensured {assigned_count} users are assigned to default group")
-            
             # Get all users
             cursor.execute("SELECT * FROM credit_users ORDER BY id")
             users = [dict(row) for row in cursor.fetchall()]
+            
+            # Get default group info once
+            cursor.execute("""
+                SELECT id, name, default_credits, is_system_group
+                FROM credit_groups WHERE id = 'default'
+            """)
+            default_group_row = cursor.fetchone()
+            default_group_dict = dict(default_group_row) if default_group_row else None
             
             # Get group memberships for all users
             for user in users:
@@ -444,6 +446,12 @@ class CreditDatabase:
                 """, (user_id,))
                 
                 groups = [dict(row) for row in cursor.fetchall()]
+                
+                # Ensure default group is always included (in memory)
+                default_group_exists = any(g['id'] == 'default' for g in groups)
+                if not default_group_exists and default_group_dict:
+                    groups.append(default_group_dict)
+                
                 user['groups'] = groups
                 
                 # Calculate total default credits from ALL groups (including default/system groups)
@@ -1271,16 +1279,16 @@ class CreditDatabase:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Before reset, assign users without groups to default group
-                assigned_count = self.assign_users_without_groups_to_default()
-                if assigned_count > 0:
-                    print(f"🔄 Assigned {assigned_count} users without groups to default group")
+                # Get default group credits to add to all users
+                cursor.execute("SELECT default_credits FROM credit_groups WHERE id = 'default'")
+                default_group_row = cursor.fetchone()
+                default_group_credits = default_group_row[0] if default_group_row else 100.0
                 
-                # Get ALL users with their total default credits from all groups (including system groups with 0 credits)
+                # Get ALL users with their explicit group credits (not including default group)
                 cursor.execute("""
                     SELECT u.id, u.balance,
-                           COALESCE(SUM(g.default_credits), 0) as total_default_credits,
-                           GROUP_CONCAT(g.name) as group_names
+                           COALESCE(SUM(CASE WHEN g.id != 'default' THEN g.default_credits ELSE 0 END), 0) as regular_group_credits,
+                           GROUP_CONCAT(CASE WHEN g.id != 'default' THEN g.name END) as group_names
                     FROM credit_users u
                     LEFT JOIN credit_user_groups ug ON u.id = ug.user_id
                     LEFT JOIN credit_groups g ON ug.group_id = g.id
@@ -1301,8 +1309,11 @@ class CreditDatabase:
                 for user in users_to_reset:
                     user_id = user[0]
                     current_balance = user[1]
-                    total_default_credits = user[2]
+                    regular_group_credits = user[2]
                     group_names = user[3] or "No groups"
+                    
+                    # Calculate total credits: regular group credits + default group credits
+                    total_default_credits = regular_group_credits + default_group_credits
                     
                     # Update previous month's statistics with final balance before reset
                     cursor.execute("""
@@ -1311,14 +1322,18 @@ class CreditDatabase:
                         WHERE user_id = ? AND year = ? AND month = ?
                     """, (current_balance, user_id, previous_year, previous_month))
                     
-                    # Update user balance to sum of all group default credits
+                    # Update user balance to sum of all group default credits (including default group)
                     cursor.execute("""
                         UPDATE credit_users 
                         SET balance = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                     """, (total_default_credits, user_id))
                     
-                    # Record transaction
+                    # Record transaction with proper group listing
+                    display_groups = "Default Users"
+                    if group_names and group_names != "No groups":
+                        display_groups = f"Default Users, {group_names}"
+                    
                     cursor.execute("""
                         INSERT INTO credit_transactions 
                         (user_id, amount, transaction_type, reason, actor, balance_after)
@@ -1327,7 +1342,7 @@ class CreditDatabase:
                         user_id,
                         total_default_credits - current_balance,
                         'monthly_reset',
-                        f'Monthly reset for groups: {group_names}',
+                        f'Monthly reset for groups: {display_groups}',
                         'system',
                         total_default_credits
                     ))
