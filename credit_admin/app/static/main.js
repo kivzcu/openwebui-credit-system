@@ -2219,7 +2219,7 @@ async function renderCurrentUsageView() {
         <!-- Statistics Container -->
         <div id="statisticsContainer" class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-6">
           <div id="statisticsHeader">
-            <h2 class="text-xl font-semibold mb-4">� Current Month Usage (${currentData.year}-${String(currentData.month).padStart(2, '0')}) - Pending</h2>
+            <h2 class="text-xl font-semibold mb-4">📅 Current Month Usage (${currentData.year}-${String(currentData.month).padStart(2, '0')}) - Pending</h2>
           </div>
           
           <!-- Warning for current month (incomplete data) -->
