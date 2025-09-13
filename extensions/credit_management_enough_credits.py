@@ -29,15 +29,17 @@ TRANSLATIONS = {
 }
 
 # Support both HTTP and HTTPS based on environment
-CREDITS_API_PROTOCOL = os.getenv("CREDITS_API_PROTOCOL", "https")  # Default to HTTPS
-CREDITS_API_HOST = os.getenv("CREDITS_API_HOST", "147.228.121.27:8000")
+CREDITS_API_PROTOCOL = os.getenv("CREDITS_API_PROTOCOL", "http")
+CREDITS_API_HOST = os.getenv("CREDITS_API_HOST", "localhost:8000")
 CREDITS_API_BASE_URL = f"{CREDITS_API_PROTOCOL}://{CREDITS_API_HOST}/api/credits"
 
 # SSL verification settings
 SSL_VERIFY = os.getenv("CREDITS_API_SSL_VERIFY", "false").lower() == "true"
 
 # API Key for authentication
-API_KEY = os.getenv("CREDITS_API_KEY", "vY97Yvh6qKywm8xE-ErTGfUofV0t1BiZ36wR3lLNHIY")
+API_KEY = os.getenv("CREDITS_API_KEY")
+if not API_KEY:
+    print("WARNING: CREDITS_API_KEY not set. Extensions may not function properly.")
 
 
 # If not available in your project, define your own exception:

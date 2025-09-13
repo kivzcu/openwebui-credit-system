@@ -19,6 +19,8 @@ venv/
 
 # Ignore local config
 .env
+.env.backup
+.webui_secret_key
 
 # Ignore VSCode settings
 .vscode/

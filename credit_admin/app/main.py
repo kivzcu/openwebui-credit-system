@@ -1,4 +1,13 @@
+from dotenv import load_dotenv
 import os
+import argparse
+import sys
+
+
+# Load environment variables from .env file in credit_admin/
+dotenv_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+load_dotenv(dotenv_path)
+
 import asyncio
 import ssl
 import logging
@@ -12,17 +21,56 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from app.api import credits_v2, auth
 from app.database import db
-from app.config import DB_FILE
+from app.config import BASE_DIR, DB_FILE
 from app.auth import print_security_config
+import uvicorn
 
 # Configuration
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Go up to credit_admin/
-PORT = int(os.getenv("PORT", "8000"))
 
-# SSL Configuration
-SSL_CERT_PATH = os.getenv("SSL_CERT_PATH", os.path.join(BASE_DIR, "ssl", "cert.pem"))
-SSL_KEY_PATH = os.getenv("SSL_KEY_PATH", os.path.join(BASE_DIR, "ssl", "key.pem"))
-ENABLE_SSL = os.getenv("ENABLE_SSL", "false").lower() == "true"
+ENABLE_SSL = False
+
+def get_uvicorn_config():
+    parser = argparse.ArgumentParser(description="Run the Credit Management System")
+    parser.add_argument('--host', default=os.getenv('HOST', '0.0.0.0'), help='Host to bind (default: 0.0.0.0)')
+    parser.add_argument('--port', type=int, default=int(os.getenv('PORT', '8001')), help='Port to bind (default: 8001)')
+    parser.add_argument('--reload', action='store_true', default=os.getenv('RELOAD', 'true').lower() == 'true', help='Enable auto-reload (default: true in dev)')
+    parser.add_argument('--ssl-certfile', help='Path to SSL certificate file')
+    parser.add_argument('--ssl-keyfile', help='Path to SSL key file')
+    args = parser.parse_args()
+
+    # Load SSL paths from env if not provided via args
+    ENABLE_SSL = os.getenv("ENABLE_SSL", "false").lower() == "true"
+    if ENABLE_SSL and not args.ssl_certfile:
+        args.ssl_certfile = os.getenv("SSL_CERT_PATH", os.path.join(BASE_DIR, "ssl", "cert.pem"))
+    if ENABLE_SSL and not args.ssl_keyfile:
+        args.ssl_keyfile = os.getenv("SSL_KEY_PATH", os.path.join(BASE_DIR, "ssl", "key.pem"))
+
+    config = {
+        'host': args.host,
+        'port': args.port,
+        'reload': args.reload,
+    }
+
+    if args.ssl_certfile:
+        if not os.path.exists(args.ssl_certfile):
+            print(f"❌ SSL certificate not found: {args.ssl_certfile}")
+            sys.exit(1)
+        if not args.ssl_keyfile or not os.path.exists(args.ssl_keyfile):
+            print(f"❌ SSL key not found: {args.ssl_keyfile}")
+            sys.exit(1)
+        config['ssl_certfile'] = args.ssl_certfile
+        config['ssl_keyfile'] = args.ssl_keyfile
+        print(f"🔒 Starting with SSL enabled on port {args.port}")
+        print(f"📄 SSL Certificate: {args.ssl_certfile}")
+        print(f"🔑 SSL Key: {args.ssl_keyfile}")
+    else:
+        print(f"🌐 Starting on port {args.port}")
+
+    return config
+
+
+
+
 
 # Security Middleware
 class SecurityMiddleware(BaseHTTPMiddleware):
@@ -351,29 +399,5 @@ async def manual_reset():
         }
 
 if __name__ == "__main__":
-    import uvicorn
-    if ENABLE_SSL:
-        print(f"🔒 Starting with SSL enabled on port {PORT}")
-        print(f"📄 SSL Certificate: {SSL_CERT_PATH}")
-        print(f"🔑 SSL Key: {SSL_KEY_PATH}")
-        
-        # Verify SSL files exist
-        if not os.path.exists(SSL_CERT_PATH):
-            print(f"❌ SSL certificate not found: {SSL_CERT_PATH}")
-            exit(1)
-        if not os.path.exists(SSL_KEY_PATH):
-            print(f"❌ SSL key not found: {SSL_KEY_PATH}")
-            exit(1)
-            
-        uvicorn.run(
-            "app.main:app", 
-            host="0.0.0.0", 
-            port=PORT, 
-            reload=True,
-            ssl_certfile=SSL_CERT_PATH,
-            ssl_keyfile=SSL_KEY_PATH
-        )
-    else:
-        print(f"🌐 Starting on port {PORT}")
-        uvicorn.run("app.main:app", host="0.0.0.0", port=PORT, reload=True)
-
+    config = get_uvicorn_config()
+    uvicorn.run("app.main:app", **config)

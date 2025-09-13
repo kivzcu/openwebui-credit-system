@@ -1,10 +1,17 @@
 import os
 
-APP_DIR = os.path.dirname(__file__)
-SCRIPT_DIR = os.path.join(APP_DIR, "data")
-DATA_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "../data"))
-DB_FILE = "/root/.open-webui/webui.db"
+# Base directory for data files
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # credit_admin/
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+# Database
+DB_FILE = os.getenv("OPENWEBUI_DATABASE_PATH", "/root/.open-webui/webui.db")
+
+# Script paths
+SCRIPT_DIR = os.path.join(BASE_DIR, "app", "data")
 SYNC_SCRIPT = os.path.join(SCRIPT_DIR, "sync_credits.py")
+
+# Data files
 CREDITS_FILE = os.path.join(DATA_DIR, "credits.json")
 MODELS_FILE = os.path.join(DATA_DIR, "credits_models.json")
 TRANSACTION_LOG_FILE = os.path.join(DATA_DIR, "transactions.json")

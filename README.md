@@ -45,16 +45,15 @@ pip install -r requirements.txt
 ### 2. Security Configuration
 
 ```bash
-# Generate secure keys
-export SECRET_KEY=$(openssl rand -hex 32)
-export CREDITS_API_KEY=$(openssl rand -hex 32)
-export ADMIN_PASSWORD="your_secure_password_here"
+# Generate secure .env file with keys and configuration
+./generate-env.sh
 
-# View current security config (shows the actual generated keys)
+# View the configuration (masked for security)
 ./show-security-config.sh
-```
 
-**📝 Note**: The `show-security-config.sh` script will display the actual API key that was generated. You'll need to copy this exact key to your OpenWebUI environment in step 5.
+# Edit .env to change ADMIN_PASSWORD if desired
+nano .env
+```
 
 ### 3. HTTPS Setup (Optional)
 
@@ -87,16 +86,16 @@ docker-compose -f docker-compose-https.yml up -d
 
 ### 5. Configure OpenWebUI Extensions
 
-Set these environment variables in your OpenWebUI setup:
+Set these environment variables in your OpenWebUI setup (copy from credit_admin/show-security-config.sh output):
 
 ```bash
-CREDITS_API_PROTOCOL=https
+CREDITS_API_PROTOCOL=http  # or https if SSL enabled
 CREDITS_API_HOST=localhost:8000
 CREDITS_API_SSL_VERIFY=false
-CREDITS_API_KEY=copy_the_exact_key_from_step_2
+CREDITS_API_KEY=your_generated_key_from_step_2
 ```
 
-**🔑 Important**: Use the **exact same API key** that was generated in step 2. You can view it by running `./show-security-config.sh` in the credit_admin directory.
+**🔑 Important**: Use the **exact same API key** from the .env (view with ./show-security-config.sh). Extensions now require these env vars to be set in OpenWebUI; no hardcodes.
 
 ## 📋 Access Points
 
@@ -123,24 +122,33 @@ The public pricing page provides:
 
 ### Environment Variables
 
+The system uses a .env file in credit_admin/ for configuration. Generate with ./generate-env.sh and edit as needed.
+
+Example .env content:
 ```bash
+# Credit Admin Environment Configuration
+# Generated on [date]
+# ⚠️ CHANGE DEFAULT PASSWORD AND KEYS BEFORE PRODUCTION!
+
 # Application
 PORT=8000
+ENABLE_SSL=false
 
 # Security
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your_secure_password
-SECRET_KEY=your_jwt_secret_key
-CREDITS_API_KEY=your_api_key
+ADMIN_PASSWORD=admin123
+SECRET_KEY=your_generated_secret_key
+CREDITS_API_KEY=your_generated_api_key
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
 # Database
-OPENWEBUI_DATABASE_PATH=/path/to/openwebui/webui.db
+OPENWEBUI_DATABASE_PATH=/root/.open-webui/webui.db
 
-# HTTPS
-ENABLE_SSL=true
-SSL_CERT_PATH=ssl/cert.pem
-SSL_KEY_PATH=ssl/key.pem
+# Extensions (for OpenWebUI setup - copy these)
+# CREDITS_API_PROTOCOL=http
+# CREDITS_API_HOST=localhost:8000
+# CREDITS_API_SSL_VERIFY=false
+# CREDITS_API_KEY=your_generated_api_key
 ```
 
 ### Extension Configuration
@@ -150,6 +158,8 @@ Place extension files in your OpenWebUI extensions directory:
 - `credit_charging_filter.py` - Charges credits for usage
 - `credit_management_enough_credits.py` - Blocks requests when insufficient credits
 - `credit_management_models.py` - Shows model pricing information
+
+**Configuration**: Extensions now load configuration from environment variables (no hardcodes). Set CREDITS_API_KEY, CREDITS_API_HOST, etc. in OpenWebUI environment as shown in Step 5.
 
 ## 📚 Documentation
 

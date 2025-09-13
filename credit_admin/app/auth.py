@@ -9,16 +9,23 @@ import bcrypt
 from pydantic import BaseModel
 
 # Security configuration
-SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY must be set in .env file")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 # Admin credentials from environment
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")  # Change this!
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+if not ADMIN_PASSWORD:
+    raise ValueError("ADMIN_PASSWORD must be set in .env file")
 
-# API Key for extensions - use a fixed default that matches extensions
-API_KEY = os.getenv("CREDITS_API_KEY", "vY97Yvh6qKywm8xE-ErTGfUofV0t1BiZ36wR3lLNHIY")
+# API Key for extensions
+API_KEY = os.getenv("CREDITS_API_KEY")
+if not API_KEY:
+    raise ValueError("CREDITS_API_KEY must be set in .env file")
 
 # Security setup
 security = HTTPBearer()
