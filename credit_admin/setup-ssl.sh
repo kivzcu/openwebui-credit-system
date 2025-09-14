@@ -18,5 +18,4 @@ echo "For production, replace with proper SSL certificates"
 chmod 600 ssl/key.pem
 chmod 644 ssl/cert.pem
 
-echo "SSL setup complete. You can now run:"
-echo "docker-compose -f docker-compose-https.yml up -d"
+
