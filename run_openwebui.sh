@@ -1,0 +1,6 @@
+CREDITS_API_PROTOCOL=https
+CREDITS_API_HOST=localhost:8001
+CREDITS_API_SSL_VERIFY=false
+CREDITS_API_KEY=a025d1802ff35674544951863d49d1896eaf8ddcb656b0c93db5af8914ebc2e9
+
+DATA_DIR=~/.open-webui uvx --python 3.11 open-webui@latest serve

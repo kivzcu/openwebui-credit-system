@@ -31,18 +31,10 @@ TRANSLATIONS = {
         'charged_credits': '💳 Charged {actual_cost:.3f} credits – New balance: {new_balance:.3f}',
         'cost_estimate': '⚠️ The cost is an estimate.'
     }
+
 }
 
-# Support both HTTP and HTTPS based on environment
-CREDITS_API_PROTOCOL = os.getenv("CREDITS_API_PROTOCOL", "https")  # Default to HTTPS
-CREDITS_API_HOST = os.getenv("CREDITS_API_HOST", "147.228.121.27:8000")
-CREDITS_API_BASE_URL = f"{CREDITS_API_PROTOCOL}://{CREDITS_API_HOST}/api/credits"
 
-# SSL verification settings
-SSL_VERIFY = os.getenv("CREDITS_API_SSL_VERIFY", "false").lower() == "true"
-
-# API Key for authentication
-API_KEY = os.getenv("CREDITS_API_KEY", "vY97Yvh6qKywm8xE-ErTGfUofV0t1BiZ36wR3lLNHIY")
 
 
 class Filter:
@@ -63,6 +55,10 @@ class Filter:
         show_status: bool = Field(
             default=True, description="Zobrazit info o stržení kreditů"
         )
+        credits_api_protocol: str = Field(default="https", description="API protocol (http or https)")
+        credits_api_host: str = Field(default="147.228.121.27:8000", description="API host and port")
+        ssl_verify: bool = Field(default=False, description="Verify SSL certificates")
+        api_key: str = Field(default="vY97Yvh6qKywm8xE-ErTGfUofV0t1BiZ36wR3lLNHIY", description="API key for authentication")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -137,6 +133,7 @@ class Filter:
     async def outlet(
         self, body, __user__=None, __event_emitter__=None, __event_call__=None
     ):
+        credits_api_base_url = f"{self.valves.credits_api_protocol}://{self.valves.credits_api_host}/api/credits"
         if not __user__:
             return body
 
@@ -187,15 +184,15 @@ class Filter:
 
         try:
             # Set up headers with API key
-            headers = {"X-API-Key": API_KEY} if API_KEY else {}
+            headers = {"X-API-Key": self.valves.api_key} if self.valves.api_key else {}
 
-            async with httpx.AsyncClient(verify=SSL_VERIFY) as client:
+            async with httpx.AsyncClient(verify=self.valves.ssl_verify) as client:
                 # Use optimized endpoints - get only the specific user and model we need
                 user_res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/user/{user_id}", headers=headers
+                    f"{credits_api_base_url}/user/{user_id}", headers=headers
                 )
                 model_res = await client.get(
-                    f"{CREDITS_API_BASE_URL}/model/{model_name}", headers=headers
+                    f"{credits_api_base_url}/model/{model_name}", headers=headers
                 )
                 user_res.raise_for_status()
                 model_res.raise_for_status()
@@ -252,12 +249,12 @@ class Filter:
 
         try:
             # Set up headers with API key
-            headers = {"X-API-Key": API_KEY} if API_KEY else {}
+            headers = {"X-API-Key": self.valves.api_key} if self.valves.api_key else {}
 
-            async with httpx.AsyncClient(verify=SSL_VERIFY) as client:
+            async with httpx.AsyncClient(verify=self.valves.ssl_verify) as client:
                 # Use the new optimized deduction endpoint
                 deduction_res = await client.post(
-                    f"{CREDITS_API_BASE_URL}/deduct-tokens",
+                    f"{credits_api_base_url}/deduct-tokens",
                     json={
                         "user_id": user_id,
                         "model_id": model_name,
