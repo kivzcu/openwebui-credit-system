@@ -21,7 +21,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from app.api import credits_v2, auth
 from app.database import db
-from app.config import BASE_DIR, DB_FILE
+from app.config import BASE_DIR, DB_FILE, DATABASE_URL, CREDIT_DATABASE_URL
 from app.auth import print_security_config
 import uvicorn
 
@@ -33,6 +33,22 @@ def is_postgresql_database():
         return bool(CREDIT_DATABASE_URL)
     except ImportError:
         return False
+
+def obfuscate_db_url(url: str) -> str:
+    """Obfuscate password in database URL for logging"""
+    if not url:
+        return url
+    
+    # Handle PostgreSQL URLs like: postgresql://user:password@host:port/db
+    if url.startswith('postgresql://'):
+        # Find the password part between : and @
+        colon_pos = url.find(':', 14)  # After postgresql://
+        at_pos = url.find('@', colon_pos)
+        if colon_pos != -1 and at_pos != -1:
+            return url[:colon_pos+1] + '***' + url[at_pos:]
+    
+    # Handle SQLite paths - no obfuscation needed
+    return url
 
 # Configuration
 
@@ -300,13 +316,15 @@ async def lifespan(app: FastAPI):
     print("🚀 Initializing Credit Management System v2.0...")
     
     # Print database configuration
-    if DB_FILE:
+    if DATABASE_URL:
+        print(f"🔗 OPENWEBUI DB: PostgreSQL ({obfuscate_db_url(DATABASE_URL)})")
+    elif DB_FILE:
         print(f"🔗 OPENWEBUI DB: SQLite ({DB_FILE})")
     else:
         print("🔗 OPENWEBUI DB: Not configured")
     
     if is_postgresql_database():
-        print("💾 CREDIT ADMIN DB: PostgreSQL")
+        print(f"💾 CREDIT ADMIN DB: PostgreSQL ({obfuscate_db_url(CREDIT_DATABASE_URL)})")
     else:
         print("💾 CREDIT ADMIN DB: SQLite")
     
@@ -330,10 +348,10 @@ async def lifespan(app: FastAPI):
         reset_task = asyncio.create_task(periodic_reset_checker())
         print("🔄 Started periodic reset checker (checks every hour)")
         
-        # Choose sync method based on database type
-        if is_postgresql_database():
+        # Choose sync method based on OpenWebUI database type
+        if DATABASE_URL:
             # PostgreSQL: Use periodic sync instead of file watching
-            print("🔄 Using PostgreSQL database - starting periodic OpenWebUI sync (every 5 minutes)")
+            print("🔄 Using PostgreSQL for OpenWebUI - starting periodic sync (every 5 minutes)")
             sync_task = asyncio.create_task(periodic_openwebui_sync())
         else:
             # SQLite: Use file watching

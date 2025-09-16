@@ -2,5 +2,6 @@
 
 export PYTHONPATH="/root/sources/openwebui-credit-system/credit_admin:$PYTHONPATH"
 
+export $(grep -v '^#' .env | xargs -d '\n')
 
-CREDIT_DATABASE_URL=postgresql://openwebui_user:rMKJQrxIZQC3uofJbM5Q@localhost:5432/credit_system_db credit_admin/venv/bin/python3 credit_admin/app/main.py
+credit_admin/venv/bin/python3 credit_admin/app/main.py

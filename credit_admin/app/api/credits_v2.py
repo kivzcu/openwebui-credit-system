@@ -6,11 +6,12 @@ Uses SQLite database instead of JSON files and provides targeted endpoints.
 from fastapi import APIRouter, Request, HTTPException, Query, Depends
 from typing import Optional, List
 import sqlite3
+import psycopg2
 from datetime import datetime, timezone
 from pydantic import BaseModel
 
 from app.database import db
-from app.config import DB_FILE  # OpenWebUI database for user sync
+from app.config import DB_FILE, DATABASE_URL  # OpenWebUI database for user sync
 from app.auth import get_current_admin_user, verify_api_key, User
 
 router = APIRouter()
@@ -474,162 +475,213 @@ async def update_settings(request: SettingsUpdateRequest, current_user: User = D
 # Sync functions
 async def sync_user_from_openwebui(user_id: str):
     """Sync a single user from OpenWebUI database"""
+    if not DATABASE_URL and not DB_FILE:
+        print("❌ OpenWebUI database not configured (DATABASE_URL or OPENWEBUI_DATABASE_PATH environment variable)")
+        return False
+        
+    conn = None
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        if DATABASE_URL:
+            conn = psycopg2.connect(DATABASE_URL)
+            cursor = conn.cursor()
+        else:
+            conn = sqlite3.connect(DB_FILE)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, email FROM user WHERE id = ?", (user_id,))
-            user = cursor.fetchone()
             
-            if user:
-                # Create user in credit system with default group
-                db.update_user_credits(
-                    user_id=user["id"],
-                    new_balance=1000.0,  # Default credits
-                    actor="sync",
-                    transaction_type="sync",
-                    reason="Synced from OpenWebUI"
-                )
-                return True
+        table_name = "\"user\"" if DATABASE_URL else "user"
+        cursor.execute(f"SELECT id, name, email FROM {table_name} WHERE id = %s", (user_id,)) if DATABASE_URL else cursor.execute(f"SELECT id, name, email FROM {table_name} WHERE id = ?", (user_id,))
+        user = cursor.fetchone()
+        
+        if user:
+            # Create user in credit system with default group
+            db.update_user_credits(
+                user_id=user[0] if DATABASE_URL else user["id"],
+                new_balance=1000.0,  # Default credits
+                actor="sync",
+                transaction_type="sync",
+                reason="Synced from OpenWebUI"
+            )
+            return True
     except Exception as e:
         print(f"Error syncing user {user_id}: {e}")
+    finally:
+        if conn:
+            conn.close()
     return False
 
 async def sync_models_from_openwebui():
     """Sync all models from OpenWebUI database with availability and restriction status"""
-    if not DB_FILE:
-        print("❌ OpenWebUI database path not configured (OPENWEBUI_DATABASE_PATH environment variable)")
+    if not DATABASE_URL and not DB_FILE:
+        print("❌ OpenWebUI database not configured (DATABASE_URL or OPENWEBUI_DATABASE_PATH environment variable)")
         return 0
         
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        if DATABASE_URL:
+            conn = psycopg2.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            print("🔗 Using PostgreSQL for OpenWebUI sync")
+        else:
+            conn = sqlite3.connect(DB_FILE)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, base_model_id, is_active, access_control FROM model")
-            models = cursor.fetchall()
+            print(f"🔗 Using SQLite for OpenWebUI sync: {DB_FILE}")
             
-            # Get all models from our local database
-            local_models = db.get_all_models()
-            local_model_ids = {model["id"] for model in local_models}
-            
-            synced_count = 0
-            updated_count = 0
-            
-            # Update availability and restriction status for all models
-            for model in models:
+        cursor.execute("SELECT id, name, base_model_id, is_active, access_control FROM model")
+        models = cursor.fetchall()
+        
+        # Get all models from our local database
+        local_models = db.get_all_models()
+        local_model_ids = {model["id"] for model in local_models}
+        
+        synced_count = 0
+        updated_count = 0
+        
+        # Update availability and restriction status for all models
+        for model in models:
+            if DATABASE_URL:
+                # PostgreSQL: access by index
+                model_id = model[0]
+                model_name = model[1] or model_id
+                is_active = bool(model[3])
+                access_control = model[4]
+            else:
+                # SQLite: access by name
                 model_id = model["id"]
                 model_name = model["name"] or model_id
-                
-                # Determine availability and restriction status
                 is_active = bool(model["is_active"])
                 access_control = model["access_control"]
                 
-                if not is_active:
-                    # Model is inactive - mark as unavailable
-                    is_available = False
-                    is_restricted = False
-                elif access_control is None or access_control == "null" or access_control == "":
-                    # No access control - fully public
-                    is_available = True
-                    is_restricted = False
-                else:
-                    # Has access control - check if it's restrictive or private
-                    import json
-                    try:
-                        # Parse JSON string if needed
-                        if isinstance(access_control, str):
-                            ac = json.loads(access_control)
-                        else:
-                            ac = access_control
-                            
-                        read_groups = ac.get("read", {}).get("group_ids", [])
-                        read_users = ac.get("read", {}).get("user_ids", [])
+            # Determine availability and restriction status
+            if not is_active:
+                # Model is inactive - mark as unavailable
+                is_available = False
+                is_restricted = False
+            elif access_control is None or access_control == "null" or access_control == "":
+                # No access control - fully public
+                is_available = True
+                is_restricted = False
+            else:
+                # Has access control - check if it's restrictive or private
+                import json
+                try:
+                    # Parse JSON string if needed
+                    if isinstance(access_control, str):
+                        ac = json.loads(access_control)
+                    else:
+                        ac = access_control
                         
-                        if len(read_groups) == 0 and len(read_users) == 0:
-                            # Empty access control - private model
-                            is_available = False
-                            is_restricted = False
-                        else:
-                            # Has specific groups/users - restricted but available
-                            is_available = True
-                            is_restricted = True
-                    except (json.JSONDecodeError, AttributeError, TypeError):
-                        # Fallback for malformed access control - treat as private
+                    read_groups = ac.get("read", {}).get("group_ids", [])
+                    read_users = ac.get("read", {}).get("user_ids", [])
+                    
+                    if len(read_groups) == 0 and len(read_users) == 0:
+                        # Empty access control - private model
                         is_available = False
                         is_restricted = False
-                
-                if model_id in local_model_ids:
-                    # Update existing model availability, restriction status, and name
-                    availability_updated = db.update_model_availability(model_id, is_available)
-                    restriction_updated = db.update_model_restriction_status(model_id, is_restricted)
-                    name_updated = db.update_model_name(model_id, model_name)
-                    if availability_updated or restriction_updated or name_updated:
-                        updated_count += 1
-                else:
-                    # Create new model with availability and restriction status
-                    success = db.update_model_pricing(
-                        model_id=model_id,
-                        name=model_name,
-                        context_price=0.001,  # Default context price
-                        generation_price=0.004,  # Default generation price
-                        is_available=is_available,
-                        is_restricted=is_restricted
-                    )
-                    if success:
-                        synced_count += 1
-                        
-                        # Log with detailed status
-                        status_msg = "public" if not is_restricted and is_available else \
-                                   "restricted" if is_restricted and is_available else \
-                                   "private"
-                        db.log_action("model_sync", "sync", f"Auto-synced model {model_id} from OpenWebUI (status: {status_msg})")
+                    else:
+                        # Has specific groups/users - restricted but available
+                        is_available = True
+                        is_restricted = True
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    # Fallback for malformed access control - treat as private
+                    is_available = False
+                    is_restricted = False
             
-            # Mark models as unavailable if they no longer exist in OpenWebUI
-            openwebui_model_ids = {model["id"] for model in models}
-            for local_model in local_models:
-                if local_model["id"] not in openwebui_model_ids:
-                    if db.update_model_availability(local_model["id"], False):
-                        updated_count += 1
-            
-            if synced_count > 0 or updated_count > 0:
-                print(f"✅ Model sync: {synced_count} new, {updated_count} updated")
-            return synced_count + updated_count
+            if model_id in local_model_ids:
+                # Update existing model availability, restriction status, and name
+                availability_updated = db.update_model_availability(model_id, is_available)
+                restriction_updated = db.update_model_restriction_status(model_id, is_restricted)
+                name_updated = db.update_model_name(model_id, model_name)
+                if availability_updated or restriction_updated or name_updated:
+                    updated_count += 1
+            else:
+                # Create new model with availability and restriction status
+                success = db.update_model_pricing(
+                    model_id=model_id,
+                    name=model_name,
+                    context_price=0.001,  # Default context price
+                    generation_price=0.004,  # Default generation price
+                    is_available=is_available,
+                    is_restricted=is_restricted
+                )
+                if success:
+                    synced_count += 1
+                    
+                    # Log with detailed status
+                    status_msg = "public" if not is_restricted and is_available else \
+                               "restricted" if is_restricted and is_available else \
+                               "private"
+                    db.log_action("model_sync", "sync", f"Auto-synced model {model_id} from OpenWebUI (status: {status_msg})")
+        
+        # Mark models as unavailable if they no longer exist in OpenWebUI
+        openwebui_model_ids = {model[0] if DATABASE_URL else model["id"] for model in models}
+        for local_model in local_models:
+            if local_model["id"] not in openwebui_model_ids:
+                if db.update_model_availability(local_model["id"], False):
+                    updated_count += 1
+        
+        if synced_count > 0 or updated_count > 0:
+            print(f"✅ Model sync: {synced_count} new, {updated_count} updated")
+        return synced_count + updated_count
     except Exception as e:
         print(f"Error syncing models: {e}")
         return 0
+    finally:
+        if conn:
+            conn.close()
 
 async def sync_all_users_from_openwebui():
     """Sync all users from OpenWebUI database"""
-    if not DB_FILE:
-        print("❌ OpenWebUI database path not configured (OPENWEBUI_DATABASE_PATH environment variable)")
+    if not DATABASE_URL and not DB_FILE:
+        print("❌ OpenWebUI database not configured (DATABASE_URL or OPENWEBUI_DATABASE_PATH environment variable)")
         return 0
         
+    conn = None
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        if DATABASE_URL:
+            conn = psycopg2.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            print("🔗 Using PostgreSQL for OpenWebUI user sync")
+        else:
+            conn = sqlite3.connect(DB_FILE)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute("SELECT id, name, email FROM user")
-            users = cursor.fetchall()
+            print(f"🔗 Using SQLite for OpenWebUI user sync: {DB_FILE}")
             
-            synced_count = 0
-            for user in users:
-                existing = db.get_user_credits(user["id"])
-                if not existing:
-                    db.update_user_credits(
-                        user_id=user["id"],
-                        new_balance=1000.0,  # Default credits
-                        actor="sync",
-                        transaction_type="sync",
-                        reason="Initial sync from OpenWebUI"
-                    )
-                    synced_count += 1
-            
-            if synced_count > 0:
-                print(f"✅ Synced {synced_count} new users from OpenWebUI")
-            return synced_count
+        cursor.execute("SELECT id, name, email FROM \"user\"")
+        users = cursor.fetchall()
+        
+        synced_count = 0
+        for user in users:
+            if DATABASE_URL:
+                user_id = user[0]
+                user_name = user[1]
+                user_email = user[2]
+            else:
+                user_id = user["id"]
+                user_name = user["name"]
+                user_email = user["email"]
+                
+            existing = db.get_user_credits(user_id)
+            if not existing:
+                db.update_user_credits(
+                    user_id=user_id,
+                    new_balance=1000.0,  # Default credits
+                    actor="sync",
+                    transaction_type="sync",
+                    reason="Initial sync from OpenWebUI"
+                )
+                synced_count += 1
+        
+        if synced_count > 0:
+            print(f"✅ Synced {synced_count} new users from OpenWebUI")
+        return synced_count
     except Exception as e:
         print(f"Error syncing users: {e}")
         return 0
+    finally:
+        if conn:
+            conn.close()
 
 async def sync_all_from_openwebui():
     """Sync users, models, and groups from OpenWebUI database"""

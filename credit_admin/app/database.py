@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
-from app.config import CREDITS_FILE, MODELS_FILE, GROUPS_FILE, DB_FILE, CREDIT_DATABASE_URL
+from app.config import CREDITS_FILE, MODELS_FILE, GROUPS_FILE, DB_FILE, CREDIT_DATABASE_URL, DATABASE_URL
 
 # PostgreSQL support
 try:
@@ -749,24 +749,37 @@ class CreditDatabase:
     
     def sync_groups_from_openwebui(self) -> int:
         """Sync groups from OpenWebUI database and return number of groups synced"""
-        if not DB_FILE:
-            print("❌ OpenWebUI database path not configured (OPENWEBUI_DATABASE_PATH environment variable)")
+        if not DATABASE_URL and not DB_FILE:
+            print("❌ OpenWebUI database not configured (DATABASE_URL or OPENWEBUI_DATABASE_PATH environment variable)")
             return 0
             
+        conn = None
         try:
-            with sqlite3.connect(DB_FILE) as openwebui_conn:
-                openwebui_conn.row_factory = sqlite3.Row
-                cursor = openwebui_conn.cursor()
-                cursor.execute("SELECT id, name, description FROM 'group'")
-                openwebui_groups = cursor.fetchall()
+            if DATABASE_URL:
+                conn = psycopg2.connect(DATABASE_URL)
+                cursor = conn.cursor()
+                print("🔗 Using PostgreSQL for OpenWebUI group sync")
+            else:
+                conn = sqlite3.connect(DB_FILE)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                print(f"🔗 Using SQLite for OpenWebUI group sync: {DB_FILE}")
+            
+            table_name = "\"group\"" if DATABASE_URL else "'group'"
+            cursor.execute(f"SELECT id, name, description FROM {table_name}")
+            openwebui_groups = cursor.fetchall()
             
             synced_count = 0
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
+            with self.get_connection() as conn_credit:
+                cursor_credit = conn_credit.cursor()
                 
                 for group in openwebui_groups:
-                    group_id = group["id"]
-                    group_name = group["name"] or group_id
+                    if DATABASE_URL:
+                        group_id = group[0]
+                        group_name = group[1] or group_id
+                    else:
+                        group_id = group["id"]
+                        group_name = group["name"] or group_id
                     
                     # Check if group exists (using PostgreSQL helper)
                     exists = self.fetch_one("SELECT id FROM credit_groups WHERE id = %s", (group_id,))
@@ -785,7 +798,7 @@ class CreditDatabase:
                             UPDATE credit_groups SET name = %s WHERE id = %s
                         """, (group_name, group_id))
                 
-                conn.commit()
+                conn_credit.commit()
             
             if synced_count > 0:
                 self.log_action("group_sync", "system", f"Synced {synced_count} groups from OpenWebUI")
@@ -796,118 +809,156 @@ class CreditDatabase:
             print(f"Error syncing groups from OpenWebUI: {e}")
             self.log_action("group_sync_error", "system", f"Failed to sync groups: {str(e)}")
             return 0
+        finally:
+            if conn:
+                conn.close()
     
     def sync_user_groups_from_openwebui(self, user_id: str) -> bool:
         """Sync a specific user's group memberships from OpenWebUI"""
-        if not DB_FILE:
-            print("❌ OpenWebUI database path not configured (OPENWEBUI_DATABASE_PATH environment variable)")
+        if not DATABASE_URL and not DB_FILE:
+            print("❌ OpenWebUI database not configured (DATABASE_URL or OPENWEBUI_DATABASE_PATH environment variable)")
             return False
             
+        conn = None
         try:
-            with sqlite3.connect(DB_FILE) as openwebui_conn:
-                openwebui_conn.row_factory = sqlite3.Row
-                cursor = openwebui_conn.cursor()
+            if DATABASE_URL:
+                conn = psycopg2.connect(DATABASE_URL)
+                cursor = conn.cursor()
+            else:
+                conn = sqlite3.connect(DB_FILE)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+            
+            table_name = "\"group\"" if DATABASE_URL else "'group'"
+            cursor.execute(f"SELECT id, user_ids FROM {table_name}")
+            groups = cursor.fetchall()
+            
+            user_group_ids = []
+            for group in groups:
+                if DATABASE_URL:
+                    group_id = group[0]
+                    user_ids_str = group[1]
+                else:
+                    group_id = group["id"]
+                    user_ids_str = group["user_ids"]
                 
-                # Get all groups where this user is a member
-                cursor.execute("SELECT id, user_ids FROM 'group'")
-                groups = cursor.fetchall()
-                
-                user_group_ids = []
-                for group in groups:
-                    if group["user_ids"]:
-                        try:
-                            user_ids = json.loads(group["user_ids"])
-                            if user_id in user_ids:
-                                user_group_ids.append(group["id"])
-                        except (json.JSONDecodeError, TypeError):
-                            continue
-                
-                # Update user's group memberships
-                self.set_user_groups(user_id, user_group_ids)
-                
-                return True
-                
+                if user_ids_str:
+                    try:
+                        user_ids = json.loads(user_ids_str)
+                        if user_id in user_ids:
+                            user_group_ids.append(group_id)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+            
+            # Update user's group memberships
+            self.set_user_groups(user_id, user_group_ids)
+            
+            return True
+            
         except Exception as e:
             print(f"Error syncing user groups for {user_id}: {e}")
             return False
+        finally:
+            if conn:
+                conn.close()
     
     def sync_all_user_groups_from_openwebui(self) -> int:
         """Sync all user group memberships from OpenWebUI"""
-        if not DB_FILE:
-            print("❌ OpenWebUI database path not configured (OPENWEBUI_DATABASE_PATH environment variable)")
+        if not DATABASE_URL and not DB_FILE:
+            print("❌ OpenWebUI database not configured (DATABASE_URL or OPENWEBUI_DATABASE_PATH environment variable)")
             return 0
             
+        conn = None
         try:
-            with sqlite3.connect(DB_FILE) as openwebui_conn:
-                openwebui_conn.row_factory = sqlite3.Row
-                cursor = openwebui_conn.cursor()
-                
-                # Get all groups with their user lists
-                cursor.execute("SELECT id, user_ids FROM 'group'")
-                groups = cursor.fetchall()
-                
-                # Build user -> groups mapping
-                user_groups_map: Dict[str, List[str]] = {}
-                for group in groups:
+            if DATABASE_URL:
+                conn = psycopg2.connect(DATABASE_URL)
+                cursor = conn.cursor()
+                print("🔗 Using PostgreSQL for OpenWebUI user-groups sync")
+            else:
+                conn = sqlite3.connect(DB_FILE)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                print(f"🔗 Using SQLite for OpenWebUI user-groups sync: {DB_FILE}")
+            
+            table_name = "\"group\"" if DATABASE_URL else "'group'"
+            cursor.execute(f"SELECT id, user_ids FROM {table_name}")
+            groups = cursor.fetchall()
+            
+            # Build user -> groups mapping
+            user_groups_map: Dict[str, List[str]] = {}
+            for group in groups:
+                if DATABASE_URL:
+                    group_id = group[0]
+                    user_ids_str = group[1]
+                else:
                     group_id = group["id"]
-                    if group["user_ids"]:
-                        try:
-                            user_ids = json.loads(group["user_ids"])
-                            for user_id in user_ids:
-                                if user_id not in user_groups_map:
-                                    user_groups_map[user_id] = []
-                                user_groups_map[user_id].append(group_id)
-                        except (json.JSONDecodeError, TypeError):
-                            continue
+                    user_ids_str = group["user_ids"]
                 
-                # First, ensure all groups exist in our database
-                synced_groups = 0
-                for group in groups:
+                if user_ids_str:
+                    try:
+                        user_ids = json.loads(user_ids_str)
+                        for user_id in user_ids:
+                            if user_id not in user_groups_map:
+                                user_groups_map[user_id] = []
+                            user_groups_map[user_id].append(group_id)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+            
+            # First, ensure all groups exist in our database
+            synced_groups = 0
+            for group in groups:
+                if DATABASE_URL:
+                    group_id = group[0]
+                    group_name = group[1] or group_id
+                else:
                     group_id = group["id"]
                     group_name = group["name"] or group_id
-                    
-                    # Check if group exists
-                    exists = self.fetch_one("SELECT id FROM credit_groups WHERE id = %s", (group_id,))
-                    
-                    if not exists:
-                        # Create new group with default 1000 credits (OpenWebUI groups are not system groups)
+                
+                # Check if group exists
+                exists = self.fetch_one("SELECT id FROM credit_groups WHERE id = %s", (group_id,))
+                
+                if not exists:
+                    # Create new group with default 1000 credits (OpenWebUI groups are not system groups)
+                    self.execute_query("""
+                        INSERT INTO credit_groups (id, name, default_credits, is_system_group)
+                        VALUES (%s, %s, %s, %s)
+                    """, (group_id, group_name, 1000.0, False))
+                    synced_groups += 1
+                    print(f"✅ Created new group: {group_name} ({group_id})")
+            
+            if synced_groups > 0:
+                print(f"✅ Synced {synced_groups} groups from OpenWebUI")
+            
+            # Update memberships for all users
+            synced_count = 0
+            with self.get_connection() as conn_credit:
+                cursor_credit = conn_credit.cursor()
+                
+                # Clear all existing memberships
+                self.execute_query("DELETE FROM credit_user_groups")
+                
+                # Add new memberships
+                for user_id, group_ids in user_groups_map.items():
+                    for group_id in group_ids:
                         self.execute_query("""
-                            INSERT INTO credit_groups (id, name, default_credits, is_system_group)
-                            VALUES (%s, %s, %s, %s)
-                        """, (group_id, group_name, 1000.0, False))
-                        synced_groups += 1
-                        print(f"✅ Created new group: {group_name} ({group_id})")
+                            INSERT INTO credit_user_groups (user_id, group_id)
+                            VALUES (%s, %s)
+                        """, (user_id, group_id))
+                    synced_count += 1
                 
-                if synced_groups > 0:
-                    print(f"✅ Synced {synced_groups} groups from OpenWebUI")
-                
-                # Update memberships for all users
-                synced_count = 0
-                with self.get_connection() as conn:
-                    cursor = conn.cursor()
-                    
-                    # Clear all existing memberships
-                    self.execute_query("DELETE FROM credit_user_groups")
-                    
-                    # Add new memberships
-                    for user_id, group_ids in user_groups_map.items():
-                        for group_id in group_ids:
-                            self.execute_query("""
-                                INSERT INTO credit_user_groups (user_id, group_id)
-                                VALUES (%s, %s)
-                            """, (user_id, group_id))
-                        synced_count += 1
-                    
-                    conn.commit()
-                
-                # Commented out to reduce log clutter - routine sync operation
-                # self.log_action("user_groups_sync", "system", f"Synced group memberships for {synced_count} users")
-                return synced_count
-                
+                conn_credit.commit()
+            
+            # Commented out to reduce log clutter - routine sync operation
+            # self.log_action("user_groups_sync", "system", f"Synced group memberships for {synced_count} users")
+            return synced_count
+            
         except Exception as e:
             print(f"Error syncing all user groups: {e}")
             self.log_action("user_groups_sync_error", "system", f"Failed to sync user groups: {str(e)}")
             return 0
+        finally:
+            if conn:
+                conn.close()
     
     # Model operations
     def get_model_pricing(self, model_id: str) -> Optional[Dict[str, Any]]:
@@ -1083,23 +1134,42 @@ class CreditDatabase:
 
     def get_user_name_from_openwebui(self, user_id: str) -> Optional[str]:
         """Get user name from OpenWebUI database"""
-        if not DB_FILE:
+        if not DATABASE_URL and not DB_FILE:
             return None
             
+        conn = None
         try:
-            conn = sqlite3.connect(DB_FILE)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT name, email FROM user WHERE id = ?", (user_id,))
+            if DATABASE_URL:
+                conn = psycopg2.connect(DATABASE_URL)
+                cursor = conn.cursor()
+            else:
+                conn = sqlite3.connect(DB_FILE)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+            
+            table_name = "\"user\"" if DATABASE_URL else "user"
+            if DATABASE_URL:
+                cursor.execute(f"SELECT name, email FROM {table_name} WHERE id = %s", (user_id,))
+            else:
+                cursor.execute(f"SELECT name, email FROM {table_name} WHERE id = ?", (user_id,))
+            
             row = cursor.fetchone()
-            conn.close()
             
             if row:
-                return row['name'] if row['name'] else row['email']
+                if DATABASE_URL:
+                    name = row[0]
+                    email = row[1]
+                else:
+                    name = row["name"]
+                    email = row["email"]
+                return name if name else email
             return None
         except Exception as e:
             print(f"Error getting user name from OpenWebUI: {e}")
             return None
+        finally:
+            if conn:
+                conn.close()
     
     def get_yearly_usage_summary(self, year):
         """Get yearly usage summary for a given year"""
@@ -1220,35 +1290,61 @@ class CreditDatabase:
         If user_ids is None, gets all users. Otherwise gets specific users.
         Returns dict with user_id as key and dict with name/email as value.
         """
-        if not DB_FILE:
+        if not DATABASE_URL and not DB_FILE:
             return {}
             
+        conn = None
         try:
-            conn = sqlite3.connect(DB_FILE)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            if DATABASE_URL:
+                conn = psycopg2.connect(DATABASE_URL)
+                cursor = conn.cursor()
+                print("🔗 Using PostgreSQL for OpenWebUI user info fetch")
+            else:
+                conn = sqlite3.connect(DB_FILE)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                print(f"🔗 Using SQLite for OpenWebUI user info fetch: {DB_FILE}")
+            
+            table_name = "\"user\"" if DATABASE_URL else "user"
             
             if user_ids is None:
                 # Get all users
-                cursor.execute("SELECT id, name, email FROM user")
+                cursor.execute(f"SELECT id, name, email FROM {table_name}")
             else:
                 # Get specific users
-                placeholders = ','.join('?' * len(user_ids))
-                cursor.execute(f"SELECT id, name, email FROM user WHERE id IN ({placeholders})", user_ids)
+                if DATABASE_URL:
+                    placeholders = ','.join(['%s'] * len(user_ids))
+                    cursor.execute(f"SELECT id, name, email FROM {table_name} WHERE id IN ({placeholders})", user_ids)
+                else:
+                    placeholders = ','.join(['?'] * len(user_ids))
+                    cursor.execute(f"SELECT id, name, email FROM {table_name} WHERE id IN ({placeholders})", user_ids)
             
             result = {}
             for row in cursor.fetchall():
-                result[row["id"]] = {
-                    "name": row["name"],
-                    "email": row["email"]
+                if DATABASE_URL:
+                    # PostgreSQL: access by index
+                    user_id = row[0]
+                    name = row[1]
+                    email = row[2]
+                else:
+                    # SQLite: access by name
+                    user_id = row["id"]
+                    name = row["name"]
+                    email = row["email"]
+                    
+                result[user_id] = {
+                    "name": name,
+                    "email": email
                 }
             
-            conn.close()
             return result
             
         except Exception as e:
             print(f"Error fetching user info from OpenWebUI: {e}")
             return {}
+        finally:
+            if conn:
+                conn.close()
     
     def get_setting(self, key: str, default_value: Optional[str] = None) -> Optional[str]:
         """Get a setting value"""
