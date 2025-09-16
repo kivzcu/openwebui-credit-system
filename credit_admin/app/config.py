@@ -5,7 +5,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # credit
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
 # Database
-DB_FILE = os.getenv("OPENWEBUI_DATABASE_PATH", "/root/.open-webui/webui.db")
+DB_FILE = os.getenv("OPENWEBUI_DATABASE_PATH", "")
 DATABASE_URL = os.getenv("DATABASE_URL")
 CREDIT_DATABASE_URL = os.getenv("CREDIT_DATABASE_URL")
 

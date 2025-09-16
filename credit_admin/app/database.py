@@ -764,7 +764,7 @@ class CreditDatabase:
                     group_id = group["id"]
                     group_name = group["name"] or group_id
                     
-                    # Check if group exists
+                    # Check if group exists (using PostgreSQL helper)
                     exists = self.fetch_one("SELECT id FROM credit_groups WHERE id = %s", (group_id,))
                     
                     if not exists:
@@ -772,7 +772,7 @@ class CreditDatabase:
                         self.execute_query("""
                             INSERT INTO credit_groups (id, name, default_credits, is_system_group)
                             VALUES (%s, %s, %s, %s)
-                        """, (group_id, group_name, 1000.0, 0))
+                        """, (group_id, group_name, 1000.0, False))
                         synced_count += 1
                         print(f"✅ Created new group: {group_name} ({group_id})")
                     else:
@@ -847,6 +847,27 @@ class CreditDatabase:
                                 user_groups_map[user_id].append(group_id)
                         except (json.JSONDecodeError, TypeError):
                             continue
+                
+                # First, ensure all groups exist in our database
+                synced_groups = 0
+                for group in groups:
+                    group_id = group["id"]
+                    group_name = group["name"] or group_id
+                    
+                    # Check if group exists
+                    exists = self.fetch_one("SELECT id FROM credit_groups WHERE id = %s", (group_id,))
+                    
+                    if not exists:
+                        # Create new group with default 1000 credits (OpenWebUI groups are not system groups)
+                        self.execute_query("""
+                            INSERT INTO credit_groups (id, name, default_credits, is_system_group)
+                            VALUES (%s, %s, %s, %s)
+                        """, (group_id, group_name, 1000.0, False))
+                        synced_groups += 1
+                        print(f"✅ Created new group: {group_name} ({group_id})")
+                
+                if synced_groups > 0:
+                    print(f"✅ Synced {synced_groups} groups from OpenWebUI")
                 
                 # Update memberships for all users
                 synced_count = 0
@@ -1365,9 +1386,8 @@ class CreditDatabase:
                 cursor = conn.cursor()
                 
                 # Get default group credits to add to all users
-                cursor.execute("SELECT default_credits FROM credit_groups WHERE id = 'default'")
-                default_group_row = cursor.fetchone()
-                default_group_credits = default_group_row[0] if default_group_row else 100.0
+                default_group_row = self.fetch_one("SELECT default_credits FROM credit_groups WHERE id = %s", ('default',))
+                default_group_credits = default_group_row['default_credits'] if default_group_row else 100.0
                 
                 # Get ALL users with their explicit group credits (not including default group)
                 if self.db_type == 'postgresql':
