@@ -16,7 +16,9 @@ TRANSLATIONS = {
         'model_pricing_title': '📊 Ceník modelu **{}**:',
         'free_model_pricing': '🆓 **BEZPLATNÝ MODEL** - Žádné kredity nejsou vyžadovány',
         'prompt_price': '• Prompt (vstup): {} kreditů/token',
-        'completion_price': '• Dokončení (výstup): {} kreditů/token'
+        'completion_price': '• Dokončení (výstup): {} kreditů/token',
+        'prompt_price_1m': '• Prompt (vstup, 1M tokenů): {} kreditů',
+        'completion_price_1m': '• Dokončení (výstup, 1M tokenů): {} kreditů'
     },
     'en': {  # Fallback language
         'failed_to_load_pricing': ' Failed to load model pricing: {}',
@@ -24,7 +26,9 @@ TRANSLATIONS = {
         'model_pricing_title': '📊 Model **{}** pricing:',
         'free_model_pricing': '🆓 **FREE MODEL** - No credits required',
         'prompt_price': '• Prompt (input): {} credits/token',
-        'completion_price': '• Completion (output): {} credits/token'
+        'completion_price': '• Completion (output): {} credits/token',
+        'prompt_price_1m': '• Prompt (input, 1M tokens): {} credits',
+        'completion_price_1m': '• Completion (output, 1M tokens): {} credits'
     }
 }
 
@@ -65,6 +69,15 @@ class Action:
             return translation.format(**kwargs)
         except:
             return translation
+
+    def _format_credits(self, value):
+        """Format credit values with commas and trim unnecessary decimals."""
+        try:
+            s = f"{value:,.6f}"
+            s = s.rstrip('0').rstrip('.')
+            return s
+        except:
+            return str(value)
 
     async def action(
         self, body, __user__=None, __event_emitter__=None, __event_call__=None
@@ -107,10 +120,14 @@ class Action:
                 f"{self._translate('free_model_pricing', user_lang)}"
             )
         else:
+            # Multiply per-token prices by 1,000,000 and format
+            context_price_1m = context_price * 1_000_000
+            generation_price_1m = generation_price * 1_000_000
+
             body["messages"][-1]["content"] += (
                 f"\n\n{self._translate('model_pricing_title', user_lang).format(model_name)}\n"
-                f"{self._translate('prompt_price', user_lang).format(context_price)}\n"
-                f"{self._translate('completion_price', user_lang).format(generation_price)}"
+                f"{self._translate('prompt_price_1m', user_lang).format(self._format_credits(context_price_1m))}\n"
+                f"{self._translate('completion_price_1m', user_lang).format(self._format_credits(generation_price_1m))}"
             )
 
         return body
