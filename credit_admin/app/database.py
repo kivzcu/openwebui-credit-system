@@ -20,7 +20,7 @@ except ImportError:
     POSTGRES_AVAILABLE = False
 
 # Ne    # ...existing code...path (separate from OpenWebUI)
-CREDITS_DB_PATH = "/root/sources/openwebui-credit-system/credit_admin/data/credits.db"
+CREDITS_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "credits.db")
 
 class CreditDatabase:
     def __init__(self, db_path: str = CREDITS_DB_PATH):
@@ -749,6 +749,10 @@ class CreditDatabase:
     
     def sync_groups_from_openwebui(self) -> int:
         """Sync groups from OpenWebUI database and return number of groups synced"""
+        if not DB_FILE:
+            print("❌ OpenWebUI database path not configured (OPENWEBUI_DATABASE_PATH environment variable)")
+            return 0
+            
         try:
             with sqlite3.connect(DB_FILE) as openwebui_conn:
                 openwebui_conn.row_factory = sqlite3.Row
@@ -795,6 +799,10 @@ class CreditDatabase:
     
     def sync_user_groups_from_openwebui(self, user_id: str) -> bool:
         """Sync a specific user's group memberships from OpenWebUI"""
+        if not DB_FILE:
+            print("❌ OpenWebUI database path not configured (OPENWEBUI_DATABASE_PATH environment variable)")
+            return False
+            
         try:
             with sqlite3.connect(DB_FILE) as openwebui_conn:
                 openwebui_conn.row_factory = sqlite3.Row
@@ -825,6 +833,10 @@ class CreditDatabase:
     
     def sync_all_user_groups_from_openwebui(self) -> int:
         """Sync all user group memberships from OpenWebUI"""
+        if not DB_FILE:
+            print("❌ OpenWebUI database path not configured (OPENWEBUI_DATABASE_PATH environment variable)")
+            return 0
+            
         try:
             with sqlite3.connect(DB_FILE) as openwebui_conn:
                 openwebui_conn.row_factory = sqlite3.Row
@@ -1071,6 +1083,9 @@ class CreditDatabase:
 
     def get_user_name_from_openwebui(self, user_id: str) -> Optional[str]:
         """Get user name from OpenWebUI database"""
+        if not DB_FILE:
+            return None
+            
         try:
             conn = sqlite3.connect(DB_FILE)
             conn.row_factory = sqlite3.Row
@@ -1083,37 +1098,36 @@ class CreditDatabase:
                 return row['name'] if row['name'] else row['email']
             return None
         except Exception as e:
-            print(f"Error getting monthly usage summary: {e}")
+            print(f"Error getting user name from OpenWebUI: {e}")
             return None
     
     def get_yearly_usage_summary(self, year):
         """Get yearly usage summary for a given year"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                cursor.execute("""
+                # Get aggregated statistics
+                result = self.fetch_one("""
                     SELECT 
                         COALESCE(SUM(credits_used), 0) as total_credits_used,
                         COALESCE(SUM(transactions_count), 0) as total_transactions,
                         COUNT(DISTINCT user_id) as unique_users,
                         COUNT(*) as total_entries
                     FROM credit_usage_statistics 
-                    WHERE year = ?
+                    WHERE year = %s
                 """, (year,))
                 
-                result = cursor.fetchone()
                 if result and result["total_entries"] > 0:
                     # Count unique models
-                    cursor.execute("""
+                    models_rows = self.fetch_all("""
                         SELECT models_used 
                         FROM credit_usage_statistics 
-                        WHERE year = ? AND models_used IS NOT NULL
+                        WHERE year = %s AND models_used IS NOT NULL
                     """, (year,))
                     
                     all_models = set()
-                    for row in cursor.fetchall():
+                    for row in models_rows:
                         try:
                             models = json.loads(row["models_used"])
                             all_models.update(models)
@@ -1132,28 +1146,28 @@ class CreditDatabase:
     def insert_dummy_statistics(self, user_id, year, month, credits_used, transactions_count, models_used, balance_before_reset=None):
         """Insert dummy statistics data for testing"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
                 # Check if entry already exists
-                cursor.execute("""
+                existing = self.fetch_one("""
                     SELECT id FROM credit_usage_statistics 
-                    WHERE user_id = ? AND year = ? AND month = ?
+                    WHERE user_id = %s AND year = %s AND month = %s
                 """, (user_id, year, month))
                 
-                if cursor.fetchone():
+                if existing:
                     # Update existing entry
-                    cursor.execute("""
+                    self.execute_query("""
                         UPDATE credit_usage_statistics 
-                        SET credits_used = ?, transactions_count = ?, models_used = ?, balance_before_reset = ?
-                        WHERE user_id = ? AND year = ? AND month = ?
+                        SET credits_used = %s, transactions_count = %s, models_used = %s, balance_before_reset = %s
+                        WHERE user_id = %s AND year = %s AND month = %s
                     """, (credits_used, transactions_count, json.dumps(models_used), balance_before_reset, user_id, year, month))
                 else:
                     # Insert new entry
-                    cursor.execute("""
+                    self.execute_query("""
                         INSERT INTO credit_usage_statistics 
                         (user_id, year, month, credits_used, transactions_count, models_used, balance_before_reset)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (user_id, year, month, credits_used, transactions_count, json.dumps(models_used), balance_before_reset))
                 
                 conn.commit()
@@ -1169,11 +1183,10 @@ class CreditDatabase:
                 cursor = conn.cursor()
                 
                 # Get all July 2025 statistics entries
-                cursor.execute("""
+                july_stats = self.fetch_all("""
                     SELECT user_id, credits_used FROM credit_usage_statistics
-                    WHERE year = 2025 AND month = 7
-                """)
-                july_stats = cursor.fetchall()
+                    WHERE year = %s AND month = %s
+                """, (2025, 7))
                 
                 updated_count = 0
                 
@@ -1184,11 +1197,11 @@ class CreditDatabase:
                     balance_before_reset = max(0, starting_balance - credits_used)
                     
                     # Update the record
-                    cursor.execute("""
+                    self.execute_query("""
                         UPDATE credit_usage_statistics 
-                        SET balance_before_reset = ?
-                        WHERE user_id = ? AND year = 2025 AND month = 7
-                    """, (balance_before_reset, user_id))
+                        SET balance_before_reset = %s
+                        WHERE user_id = %s AND year = %s AND month = %s
+                    """, (balance_before_reset, user_id, 2025, 7))
                     
                     updated_count += 1
                     print(f"Updated {user_id}: used {credits_used:.2f}, balance before reset: {balance_before_reset:.2f}")
@@ -1207,6 +1220,9 @@ class CreditDatabase:
         If user_ids is None, gets all users. Otherwise gets specific users.
         Returns dict with user_id as key and dict with name/email as value.
         """
+        if not DB_FILE:
+            return {}
+            
         try:
             conn = sqlite3.connect(DB_FILE)
             conn.row_factory = sqlite3.Row
@@ -1686,32 +1702,30 @@ class CreditDatabase:
             month = month or current_date.month
         
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
+            with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
                 # Get aggregated statistics
-                cursor.execute("""
+                result = self.fetch_one("""
                     SELECT 
                         COALESCE(SUM(credits_used), 0) as total_credits_used,
                         COALESCE(SUM(transactions_count), 0) as total_transactions,
                         COUNT(DISTINCT user_id) as unique_users,
                         COUNT(*) as total_entries
                     FROM credit_usage_statistics 
-                    WHERE year = ? AND month = ?
+                    WHERE year = %s AND month = %s
                 """, (year, month))
                 
-                result = cursor.fetchone()
                 if result and result["total_entries"] > 0:
                     # Count unique models
-                    cursor.execute("""
+                    models_rows = self.fetch_all("""
                         SELECT models_used 
                         FROM credit_usage_statistics 
-                        WHERE year = ? AND month = ? AND models_used IS NOT NULL
+                        WHERE year = %s AND month = %s AND models_used IS NOT NULL
                     """, (year, month))
                     
                     all_models = set()
-                    for row in cursor.fetchall():
+                    for row in models_rows:
                         try:
                             models = json.loads(row["models_used"])
                             all_models.update(models)

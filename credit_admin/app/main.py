@@ -299,6 +299,17 @@ async def lifespan(app: FastAPI):
     # Startup
     print("🚀 Initializing Credit Management System v2.0...")
     
+    # Print database configuration
+    if DB_FILE:
+        print(f"🔗 OPENWEBUI DB: SQLite ({DB_FILE})")
+    else:
+        print("🔗 OPENWEBUI DB: Not configured")
+    
+    if is_postgresql_database():
+        print("💾 CREDIT ADMIN DB: PostgreSQL")
+    else:
+        print("💾 CREDIT ADMIN DB: SQLite")
+    
     # Print security configuration
     print_security_config()
     

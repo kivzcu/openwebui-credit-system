@@ -497,6 +497,10 @@ async def sync_user_from_openwebui(user_id: str):
 
 async def sync_models_from_openwebui():
     """Sync all models from OpenWebUI database with availability and restriction status"""
+    if not DB_FILE:
+        print("❌ OpenWebUI database path not configured (OPENWEBUI_DATABASE_PATH environment variable)")
+        return 0
+        
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
@@ -596,6 +600,10 @@ async def sync_models_from_openwebui():
 
 async def sync_all_users_from_openwebui():
     """Sync all users from OpenWebUI database"""
+    if not DB_FILE:
+        print("❌ OpenWebUI database path not configured (OPENWEBUI_DATABASE_PATH environment variable)")
+        return 0
+        
     try:
         with sqlite3.connect(DB_FILE) as conn:
             conn.row_factory = sqlite3.Row
