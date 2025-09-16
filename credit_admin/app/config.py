@@ -7,6 +7,7 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 # Database
 DB_FILE = os.getenv("OPENWEBUI_DATABASE_PATH", "/root/.open-webui/webui.db")
 DATABASE_URL = os.getenv("DATABASE_URL")
+CREDIT_DATABASE_URL = os.getenv("CREDIT_DATABASE_URL")
 
 # Script paths
 SCRIPT_DIR = os.path.join(BASE_DIR, "app", "data")

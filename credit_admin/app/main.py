@@ -25,6 +25,15 @@ from app.config import BASE_DIR, DB_FILE
 from app.auth import print_security_config
 import uvicorn
 
+def is_postgresql_database():
+    """Check if we're using PostgreSQL database instead of SQLite"""
+    from app.config import CREDIT_DATABASE_URL
+    try:
+        import psycopg2
+        return bool(CREDIT_DATABASE_URL)
+    except ImportError:
+        return False
+
 # Configuration
 
 ENABLE_SSL = False
@@ -143,6 +152,7 @@ class OpenWebUIDBWatcher(FileSystemEventHandler):
 # Global observer instance
 db_observer = None
 reset_task = None  # Global background task for reset checking
+sync_task = None  # Global background task for OpenWebUI sync (PostgreSQL only)
 
 # Configure logging for reset operations
 reset_logger = logging.getLogger('credit_reset')
@@ -208,6 +218,49 @@ async def periodic_reset_checker():
             except:
                 pass  # If we can't log to DB, at least we have the console log
 
+async def periodic_openwebui_sync():
+    """Background task that periodically syncs users, models, and groups from OpenWebUI (for PostgreSQL)"""
+    sync_logger = logging.getLogger('openwebui_sync')
+    sync_logger.setLevel(logging.INFO)
+
+    # Only add handler if none exist (prevents duplicate handlers on reload)
+    if not sync_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [SYNC] %(message)s'))
+        sync_logger.addHandler(handler)
+
+    sync_logger.info("🔄 Starting periodic OpenWebUI sync...")
+
+    while True:
+        try:
+            # Sync every 5 minutes (300 seconds)
+            await asyncio.sleep(300)
+
+            sync_logger.info("🔍 Syncing users, models, and groups from OpenWebUI...")
+
+            result = await credits_v2.sync_all_from_openwebui()
+
+            if result['users'] > 0 or result['models'] > 0 or result['groups'] > 0:
+                sync_logger.info(f"✅ Sync completed - Users: {result['users']}, Models: {result['models']}, Groups: {result['groups']}, User-Groups: {result['user_groups']}")
+            else:
+                sync_logger.info("✅ Sync completed - No changes detected")
+
+        except asyncio.CancelledError:
+            sync_logger.info("🛑 Periodic OpenWebUI sync cancelled")
+            break
+        except Exception as e:
+            sync_logger.error(f"❌ Error in periodic OpenWebUI sync: {e}")
+            # Log error to database if possible
+            try:
+                db.log_action(
+                    log_type="sync_error",
+                    actor="background_task",
+                    message=f"Error in periodic OpenWebUI sync: {str(e)}",
+                    metadata={"error": str(e)}
+                )
+            except:
+                pass  # If we can't log to DB, at least we have the console log
+
 async def check_reset_on_startup():
     """Check for needed reset immediately on startup"""
     try:
@@ -241,7 +294,7 @@ async def check_reset_on_startup():
 # Async context manager for lifespan events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global db_observer, reset_task
+    global db_observer, reset_task, sync_task
     
     # Startup
     print("🚀 Initializing Credit Management System v2.0...")
@@ -266,17 +319,23 @@ async def lifespan(app: FastAPI):
         reset_task = asyncio.create_task(periodic_reset_checker())
         print("🔄 Started periodic reset checker (checks every hour)")
         
-        # Start watching OpenWebUI database for changes
-        if os.path.exists(DB_FILE):
-            print(f"👁️  Watching OpenWebUI database: {DB_FILE}")
-            # Get the current event loop
-            loop = asyncio.get_running_loop()
-            event_handler = OpenWebUIDBWatcher(loop)
-            db_observer = Observer()
-            db_observer.schedule(event_handler, os.path.dirname(DB_FILE), recursive=False)
-            db_observer.start()
+        # Choose sync method based on database type
+        if is_postgresql_database():
+            # PostgreSQL: Use periodic sync instead of file watching
+            print("🔄 Using PostgreSQL database - starting periodic OpenWebUI sync (every 5 minutes)")
+            sync_task = asyncio.create_task(periodic_openwebui_sync())
         else:
-            print(f"⚠️  OpenWebUI database not found: {DB_FILE}")
+            # SQLite: Use file watching
+            if os.path.exists(DB_FILE):
+                print(f"👁️  Watching OpenWebUI database: {DB_FILE}")
+                # Get the current event loop
+                loop = asyncio.get_running_loop()
+                event_handler = OpenWebUIDBWatcher(loop)
+                db_observer = Observer()
+                db_observer.schedule(event_handler, os.path.dirname(DB_FILE), recursive=False)
+                db_observer.start()
+            else:
+                print(f"⚠️  OpenWebUI database not found: {DB_FILE}")
         
         print("✅ Database initialized and ready!")
     except Exception as e:
@@ -293,6 +352,15 @@ async def lifespan(app: FastAPI):
         reset_task.cancel()
         try:
             await reset_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Cancel the sync task (PostgreSQL only)
+    if sync_task:
+        print("🛑 Stopping periodic OpenWebUI sync...")
+        sync_task.cancel()
+        try:
+            await sync_task
         except asyncio.CancelledError:
             pass
     

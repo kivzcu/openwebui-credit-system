@@ -9,21 +9,72 @@ import json
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
-from app.config import CREDITS_FILE, MODELS_FILE, GROUPS_FILE, DB_FILE
+from app.config import CREDITS_FILE, MODELS_FILE, GROUPS_FILE, DB_FILE, CREDIT_DATABASE_URL
+
+# PostgreSQL support
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    POSTGRES_AVAILABLE = False
 
 # Ne    # ...existing code...path (separate from OpenWebUI)
 CREDITS_DB_PATH = "/root/sources/openwebui-credit-system/credit_admin/data/credits.db"
 
 class CreditDatabase:
     def __init__(self, db_path: str = CREDITS_DB_PATH):
-        self.db_path = db_path
+        if CREDIT_DATABASE_URL and POSTGRES_AVAILABLE:
+            self.db_type = 'postgresql'
+            self.connection_string = CREDIT_DATABASE_URL
+        else:
+            self.db_type = 'sqlite'
+            self.db_path = db_path
         self.init_database()
+    
+    def get_placeholder(self):
+        """Get the correct placeholder for the database type"""
+        return '%' if self.db_type == 'postgresql' else '?'
+    
+    def execute_query(self, query: str, params: tuple = ()) -> 'cursor':
+        """Execute a query with proper parameter formatting for the database type"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if self.db_type == 'postgresql':
+                # PostgreSQL uses %s
+                query = query.replace('?', '%s')
+            cursor.execute(query, params)
+            conn.commit()
+            return cursor
+    
+    def fetch_one(self, query: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
+        """Fetch one row with proper parameter formatting"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if self.db_type == 'postgresql':
+                query = query.replace('?', '%s')
+            cursor.execute(query, params)
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
+    def fetch_all(self, query: str, params: tuple = ()) -> List[Dict[str, Any]]:
+        """Fetch all rows with proper parameter formatting"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if self.db_type == 'postgresql':
+                query = query.replace('?', '%s')
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
     
     @contextmanager
     def get_connection(self):
         """Context manager for database connections"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row  # Enable column access by name
+        if self.db_type == 'postgresql':
+            conn = psycopg2.connect(self.connection_string)
+            conn.cursor_factory = RealDictCursor
+        else:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row  # Enable column access by name
         try:
             yield conn
         finally:
@@ -34,249 +85,348 @@ class CreditDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Users table - credits (no direct group reference anymore)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS credit_users (
-                    id TEXT PRIMARY KEY,
-                    balance REAL NOT NULL DEFAULT 0.0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Groups table - credit groups with default allocations
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS credit_groups (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    default_credits REAL NOT NULL DEFAULT 0.0,
-                    is_system_group BOOLEAN NOT NULL DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # User-Group membership junction table for many-to-many relationship
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS credit_user_groups (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    group_id TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(user_id, group_id),
-                    FOREIGN KEY (user_id) REFERENCES credit_users(id) ON DELETE CASCADE,
-                    FOREIGN KEY (group_id) REFERENCES credit_groups(id) ON DELETE CASCADE
-                )
-            """)
-            
-            # Models table - pricing information
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS credit_models (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    context_price REAL NOT NULL DEFAULT 0.001,  -- cost per input token
-                    generation_price REAL NOT NULL DEFAULT 0.004,  -- cost per output token
-                    is_available BOOLEAN NOT NULL DEFAULT 1,  -- availability in OpenWebUI
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Add is_available column if it doesn't exist (migration)
-            try:
-                cursor.execute("ALTER TABLE credit_models ADD COLUMN is_available BOOLEAN NOT NULL DEFAULT 1")
-            except sqlite3.OperationalError:
-                # Column already exists
-                pass
-            
-            # Add is_free column if it doesn't exist (migration)
-            try:
-                cursor.execute("ALTER TABLE credit_models ADD COLUMN is_free BOOLEAN NOT NULL DEFAULT 0")
-            except sqlite3.OperationalError:
-                # Column already exists
-                pass
-            
-            # Add is_restricted column if it doesn't exist (migration)
-            try:
-                cursor.execute("ALTER TABLE credit_models ADD COLUMN is_restricted BOOLEAN NOT NULL DEFAULT 0")
-            except sqlite3.OperationalError:
-                # Column already exists
-                pass
-            
-            # Add is_system_group column to credit_groups if it doesn't exist (migration)
-            try:
-                cursor.execute("ALTER TABLE credit_groups ADD COLUMN is_system_group BOOLEAN NOT NULL DEFAULT 0")
-            except sqlite3.OperationalError:
-                # Column already exists
-                pass
-            
-            # Create default system group if it doesn't exist
-            cursor.execute("""
-                INSERT OR IGNORE INTO credit_groups (id, name, default_credits, is_system_group)
-                VALUES ('default', 'Default Users', 0.0, 1)
-            """)
-            
-            # Ensure existing 'default' group is marked as system group but preserve its credits
-            cursor.execute("""
-                UPDATE credit_groups 
-                SET name = 'Default Users', is_system_group = 1
-                WHERE id = 'default'
-            """)
-            
-            # Migration: Remove old group_id column from credit_users if it exists
-            try:
-                # Check if group_id column exists
-                cursor.execute("PRAGMA table_info(credit_users)")
-                columns = [column[1] for column in cursor.fetchall()]
-                if 'group_id' in columns:
-                    print("🔄 Migrating credit_users table to remove group_id column...")
-                    
-                    # Create backup of existing user-group relationships
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
-                        SELECT id, group_id FROM credit_users WHERE group_id IS NOT NULL
-                    """)
-                    
-                    # Create new table without group_id
-                    cursor.execute("""
-                        CREATE TABLE IF NOT EXISTS credit_users_new (
-                            id TEXT PRIMARY KEY,
-                            balance REAL NOT NULL DEFAULT 0.0,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )
-                    """)
-                    
-                    # Copy data to new table
-                    cursor.execute("""
-                        INSERT INTO credit_users_new (id, balance, created_at, updated_at)
-                        SELECT id, balance, created_at, updated_at FROM credit_users
-                    """)
-                    
-                    # Drop old table and rename new one
-                    cursor.execute("DROP TABLE credit_users")
-                    cursor.execute("ALTER TABLE credit_users_new RENAME TO credit_users")
-                    
-                    print("✅ Migration completed: credit_users table updated")
-            except sqlite3.OperationalError as e:
-                # Migration already completed or other error
-                pass
-            
-            # Transaction history
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS credit_transactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    amount REAL NOT NULL,
-                    transaction_type TEXT NOT NULL,  -- 'deduct', 'add', 'reset', etc.
-                    reason TEXT,
-                    actor TEXT,  -- who performed the action
-                    balance_after REAL NOT NULL,
-                    model_id TEXT,  -- optional, for model-specific charges
-                    prompt_tokens INTEGER,  -- optional, for token tracking
-                    completion_tokens INTEGER,  -- optional, for token tracking
-                    cached_tokens INTEGER,  -- optional, for cached token tracking
-                    reasoning_tokens INTEGER,  -- optional, for reasoning token tracking
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Add cached_tokens column if it doesn't exist (migration)
-            try:
-                cursor.execute("ALTER TABLE credit_transactions ADD COLUMN cached_tokens INTEGER")
-            except sqlite3.OperationalError:
-                # Column already exists
-                pass
+            if self.db_type == 'postgresql':
+                # PostgreSQL schema with SERIAL and proper defaults
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_users (
+                        id TEXT PRIMARY KEY,
+                        balance REAL NOT NULL DEFAULT 0.0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
                 
-            # Add reasoning_tokens column if it doesn't exist (migration)
-            try:
-                cursor.execute("ALTER TABLE credit_transactions ADD COLUMN reasoning_tokens INTEGER")
-            except sqlite3.OperationalError:
-                # Column already exists
-                pass
-            
-            # System logs
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS credit_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    log_type TEXT NOT NULL,
-                    actor TEXT NOT NULL,
-                    message TEXT,
-                    metadata TEXT,  -- JSON string for additional data
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Settings table for configuration
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS credit_settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Initialize default USD to credit conversion ratio
-            cursor.execute("""
-                INSERT OR IGNORE INTO credit_settings (key, value) 
-                VALUES ('usd_to_credit_ratio', '1000.0')
-            """)
-            
-            # Initialize default token multiplier (1K tokens)
-            cursor.execute("""
-                INSERT OR IGNORE INTO credit_settings (key, value) 
-                VALUES ('token_multiplier', '1000')
-            """)
-            
-            # Reset tracking table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS credit_reset_tracking (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    reset_type TEXT NOT NULL,  -- 'monthly', 'manual', etc.
-                    reset_date DATE NOT NULL,  -- YYYY-MM-DD format
-                    reset_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    users_affected INTEGER NOT NULL DEFAULT 0,
-                    total_credits_reset REAL NOT NULL DEFAULT 0.0,
-                    status TEXT NOT NULL DEFAULT 'completed',  -- 'pending', 'completed', 'failed'
-                    error_message TEXT,
-                    metadata TEXT  -- JSON string for additional data
-                )
-            """)
-            
-            # Monthly usage statistics table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS credit_usage_statistics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    year INTEGER NOT NULL,
-                    month INTEGER NOT NULL,  -- 1-12
-                    credits_used REAL NOT NULL DEFAULT 0.0,
-                    transactions_count INTEGER NOT NULL DEFAULT 0,
-                    models_used TEXT,  -- JSON array of model IDs used
-                    balance_before_reset REAL,  -- Balance at end of month, before next reset
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(user_id, year, month)
-                )
-            """)
-            
-            # Add balance_before_reset column if it doesn't exist (migration)
-            try:
-                cursor.execute("ALTER TABLE credit_usage_statistics ADD COLUMN balance_before_reset REAL")
-            except sqlite3.OperationalError:
-                # Column already exists
-                pass
-            
-            # Indexes for better performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_user_groups_user ON credit_user_groups(user_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_user_groups_group ON credit_user_groups(group_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON credit_transactions(user_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_model ON credit_transactions(model_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_type ON credit_logs(log_type)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_reset_tracking_date ON credit_reset_tracking(reset_date)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_reset_tracking_type ON credit_reset_tracking(reset_type)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_user ON credit_usage_statistics(user_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_date ON credit_usage_statistics(year, month)")
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_groups (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        default_credits REAL NOT NULL DEFAULT 0.0,
+                        is_system_group BOOLEAN NOT NULL DEFAULT false,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_user_groups (
+                        id SERIAL PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        group_id TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, group_id),
+                        FOREIGN KEY (user_id) REFERENCES credit_users(id) ON DELETE CASCADE,
+                        FOREIGN KEY (group_id) REFERENCES credit_groups(id) ON DELETE CASCADE
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_models (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        context_price REAL NOT NULL DEFAULT 0.001,
+                        generation_price REAL NOT NULL DEFAULT 0.004,
+                        is_available BOOLEAN NOT NULL DEFAULT true,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Add columns if they don't exist
+                try:
+                    cursor.execute("ALTER TABLE credit_models ADD COLUMN IF NOT EXISTS is_free BOOLEAN NOT NULL DEFAULT false")
+                except:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE credit_models ADD COLUMN IF NOT EXISTS is_restricted BOOLEAN NOT NULL DEFAULT false")
+                except:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE credit_groups ADD COLUMN IF NOT EXISTS is_system_group BOOLEAN NOT NULL DEFAULT false")
+                except:
+                    pass
+                
+                cursor.execute("""
+                    INSERT INTO credit_groups (id, name, default_credits, is_system_group)
+                    VALUES ('default', 'Default Users', 0.0, true)
+                    ON CONFLICT (id) DO NOTHING
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_transactions (
+                        id SERIAL PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        transaction_type TEXT NOT NULL,
+                        reason TEXT,
+                        actor TEXT,
+                        balance_after REAL NOT NULL,
+                        model_id TEXT,
+                        prompt_tokens INTEGER,
+                        completion_tokens INTEGER,
+                        cached_tokens INTEGER,
+                        reasoning_tokens INTEGER,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                try:
+                    cursor.execute("ALTER TABLE credit_transactions ADD COLUMN IF NOT EXISTS cached_tokens INTEGER")
+                except:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE credit_transactions ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER")
+                except:
+                    pass
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_logs (
+                        id SERIAL PRIMARY KEY,
+                        log_type TEXT NOT NULL,
+                        actor TEXT NOT NULL,
+                        message TEXT,
+                        metadata TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                cursor.execute("""
+                    INSERT INTO credit_settings (key, value) 
+                    VALUES ('usd_to_credit_ratio', '1000.0')
+                    ON CONFLICT (key) DO NOTHING
+                """)
+                
+                cursor.execute("""
+                    INSERT INTO credit_settings (key, value) 
+                    VALUES ('token_multiplier', '1000')
+                    ON CONFLICT (key) DO NOTHING
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_reset_tracking (
+                        id SERIAL PRIMARY KEY,
+                        reset_type TEXT NOT NULL,
+                        reset_date DATE NOT NULL,
+                        reset_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        users_affected INTEGER NOT NULL DEFAULT 0,
+                        total_credits_reset REAL NOT NULL DEFAULT 0.0,
+                        status TEXT NOT NULL DEFAULT 'completed',
+                        error_message TEXT,
+                        metadata TEXT
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_usage_statistics (
+                        id SERIAL PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        year INTEGER NOT NULL,
+                        month INTEGER NOT NULL,
+                        credits_used REAL NOT NULL DEFAULT 0.0,
+                        transactions_count INTEGER NOT NULL DEFAULT 0,
+                        models_used TEXT,
+                        balance_before_reset REAL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, year, month)
+                    )
+                """)
+                
+                try:
+                    cursor.execute("ALTER TABLE credit_usage_statistics ADD COLUMN IF NOT EXISTS balance_before_reset REAL")
+                except:
+                    pass
+                
+                # Indexes
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_user_groups_user ON credit_user_groups(user_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_user_groups_group ON credit_user_groups(group_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON credit_transactions(user_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_model ON credit_transactions(model_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_type ON credit_logs(log_type)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_reset_tracking_date ON credit_reset_tracking(reset_date)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_reset_tracking_type ON credit_reset_tracking(reset_type)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_user ON credit_usage_statistics(user_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_date ON credit_usage_statistics(year, month)")
+                
+            else:
+                # SQLite schema (existing)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_users (
+                        id TEXT PRIMARY KEY,
+                        balance REAL NOT NULL DEFAULT 0.0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_groups (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        default_credits REAL NOT NULL DEFAULT 0.0,
+                        is_system_group BOOLEAN NOT NULL DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_user_groups (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL,
+                        group_id TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, group_id),
+                        FOREIGN KEY (user_id) REFERENCES credit_users(id) ON DELETE CASCADE,
+                        FOREIGN KEY (group_id) REFERENCES credit_groups(id) ON DELETE CASCADE
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_models (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        context_price REAL NOT NULL DEFAULT 0.001,
+                        generation_price REAL NOT NULL DEFAULT 0.004,
+                        is_available BOOLEAN NOT NULL DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                try:
+                    cursor.execute("ALTER TABLE credit_models ADD COLUMN is_available BOOLEAN NOT NULL DEFAULT 1")
+                except sqlite3.OperationalError:
+                    pass
+                
+                try:
+                    cursor.execute("ALTER TABLE credit_models ADD COLUMN is_free BOOLEAN NOT NULL DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass
+                
+                try:
+                    cursor.execute("ALTER TABLE credit_models ADD COLUMN is_restricted BOOLEAN NOT NULL DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass
+                
+                try:
+                    cursor.execute("ALTER TABLE credit_groups ADD COLUMN is_system_group BOOLEAN NOT NULL DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass
+                
+                cursor.execute("""
+                    INSERT OR IGNORE INTO credit_groups (id, name, default_credits, is_system_group)
+                    VALUES ('default', 'Default Users', 0.0, 1)
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_transactions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL,
+                        amount REAL NOT NULL,
+                        transaction_type TEXT NOT NULL,
+                        reason TEXT,
+                        actor TEXT,
+                        balance_after REAL NOT NULL,
+                        model_id TEXT,
+                        prompt_tokens INTEGER,
+                        completion_tokens INTEGER,
+                        cached_tokens INTEGER,
+                        reasoning_tokens INTEGER,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                try:
+                    cursor.execute("ALTER TABLE credit_transactions ADD COLUMN cached_tokens INTEGER")
+                except sqlite3.OperationalError:
+                    pass
+                
+                try:
+                    cursor.execute("ALTER TABLE credit_transactions ADD COLUMN reasoning_tokens INTEGER")
+                except sqlite3.OperationalError:
+                    pass
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        log_type TEXT NOT NULL,
+                        actor TEXT NOT NULL,
+                        message TEXT,
+                        metadata TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                cursor.execute("""
+                    INSERT OR IGNORE INTO credit_settings (key, value) 
+                    VALUES ('usd_to_credit_ratio', '1000.0')
+                """)
+                
+                cursor.execute("""
+                    INSERT OR IGNORE INTO credit_settings (key, value) 
+                    VALUES ('token_multiplier', '1000')
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_reset_tracking (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        reset_type TEXT NOT NULL,
+                        reset_date DATE NOT NULL,
+                        reset_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        users_affected INTEGER NOT NULL DEFAULT 0,
+                        total_credits_reset REAL NOT NULL DEFAULT 0.0,
+                        status TEXT NOT NULL DEFAULT 'completed',
+                        error_message TEXT,
+                        metadata TEXT
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_usage_statistics (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL,
+                        year INTEGER NOT NULL,
+                        month INTEGER NOT NULL,
+                        credits_used REAL NOT NULL DEFAULT 0.0,
+                        transactions_count INTEGER NOT NULL DEFAULT 0,
+                        models_used TEXT,
+                        balance_before_reset REAL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, year, month)
+                    )
+                """)
+                
+                try:
+                    cursor.execute("ALTER TABLE credit_usage_statistics ADD COLUMN balance_before_reset REAL")
+                except sqlite3.OperationalError:
+                    pass
+                
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_user_groups_user ON credit_user_groups(user_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_credit_user_groups_group ON credit_user_groups(group_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user ON credit_transactions(user_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_model ON credit_transactions(model_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_type ON credit_logs(log_type)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_reset_tracking_date ON credit_reset_tracking(reset_date)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_reset_tracking_type ON credit_reset_tracking(reset_type)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_user ON credit_usage_statistics(user_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_date ON credit_usage_statistics(year, month)")
             
             conn.commit()
     
@@ -295,9 +445,13 @@ class CreditDatabase:
                 for group_id, group_info in groups_data.items():
                     # Mark migrated groups as non-system groups (they're from previous data)
                     is_system = group_id == 'default'  # Only 'default' should be marked as system
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO credit_groups (id, name, default_credits, is_system_group)
-                        VALUES (?, ?, ?, ?)
+                    self.execute_query("""
+                        INSERT INTO credit_groups (id, name, default_credits, is_system_group)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            default_credits = EXCLUDED.default_credits,
+                            is_system_group = EXCLUDED.is_system_group
                     """, (group_id, group_info.get('name', ''), group_info.get('default_credits', 0.0), is_system))
                 print(f"✅ Migrated {len(groups_data)} groups")
             
@@ -307,9 +461,13 @@ class CreditDatabase:
                     models_data = json.load(f)
                 
                 for model_id, model_info in models_data.items():
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO credit_models (id, name, context_price, generation_price)
-                        VALUES (?, ?, ?, ?)
+                    self.execute_query("""
+                        INSERT INTO credit_models (id, name, context_price, generation_price)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            name = EXCLUDED.name,
+                            context_price = EXCLUDED.context_price,
+                            generation_price = EXCLUDED.generation_price
                     """, (
                         model_id, 
                         model_info.get('name', model_id),
@@ -326,17 +484,19 @@ class CreditDatabase:
                 users = credits_data.get('users', {})
                 for user_id, user_info in users.items():
                     # Insert user
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO credit_users (id, balance)
-                        VALUES (?, ?)
+                    self.execute_query("""
+                        INSERT INTO credit_users (id, balance)
+                        VALUES (%s, %s)
+                        ON CONFLICT (id) DO UPDATE SET balance = EXCLUDED.balance
                     """, (user_id, user_info.get('balance', 0.0)))
                     
                     # Insert user-group relationship if group exists
                     group_id = user_info.get('group')
                     if group_id:
-                        cursor.execute("""
-                            INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
-                            VALUES (?, ?)
+                        self.execute_query("""
+                            INSERT INTO credit_user_groups (user_id, group_id)
+                            VALUES (%s, %s)
+                            ON CONFLICT (user_id, group_id) DO NOTHING
                         """, (user_id, group_id))
                     
                     # Migrate transaction history
@@ -366,36 +526,30 @@ class CreditDatabase:
     def get_user_credits(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get user's credit information with all group memberships"""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
             # Get user basic info
-            cursor.execute("SELECT * FROM credit_users WHERE id = ?", (user_id,))
-            user_row = cursor.fetchone()
+            user_row = self.fetch_one("SELECT * FROM credit_users WHERE id = %s", (user_id,))
             if not user_row:
                 return None
 
             user_data = dict(user_row)
             
             # Get all group memberships (including default group)
-            cursor.execute("""
+            groups = self.fetch_all("""
                 SELECT cg.id, cg.name, cg.default_credits, cg.is_system_group
                 FROM credit_groups cg
                 JOIN credit_user_groups cug ON cg.id = cug.group_id
-                WHERE cug.user_id = ?
+                WHERE cug.user_id = %s
                 ORDER BY cg.name
             """, (user_id,))
-            
-            groups = [dict(row) for row in cursor.fetchall()]
             
             # Ensure default group is always included (in memory)
             default_group_exists = any(g['id'] == 'default' for g in groups)
             if not default_group_exists:
                 # Get default group info and add it
-                cursor.execute("""
+                default_group_row = self.fetch_one("""
                     SELECT id, name, default_credits, is_system_group
                     FROM credit_groups WHERE id = 'default'
                 """)
-                default_group_row = cursor.fetchone()
                 if default_group_row:
                     groups.append(dict(default_group_row))
             
@@ -420,32 +574,26 @@ class CreditDatabase:
     def get_all_users_with_credits(self) -> List[Dict[str, Any]]:
         """Get all users with their credit information and group memberships"""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
             # Get all users
-            cursor.execute("SELECT * FROM credit_users ORDER BY id")
-            users = [dict(row) for row in cursor.fetchall()]
+            users = self.fetch_all("SELECT * FROM credit_users ORDER BY id")
             
             # Get default group info once
-            cursor.execute("""
+            default_group_row = self.fetch_one("""
                 SELECT id, name, default_credits, is_system_group
                 FROM credit_groups WHERE id = 'default'
             """)
-            default_group_row = cursor.fetchone()
             default_group_dict = dict(default_group_row) if default_group_row else None
             
             # Get group memberships for all users
             for user in users:
                 user_id = user['id']
-                cursor.execute("""
+                groups = self.fetch_all("""
                     SELECT cg.id, cg.name, cg.default_credits, cg.is_system_group
                     FROM credit_groups cg
                     JOIN credit_user_groups cug ON cg.id = cug.group_id
-                    WHERE cug.user_id = ?
+                    WHERE cug.user_id = %s
                     ORDER BY cg.name
                 """, (user_id,))
-                
-                groups = [dict(row) for row in cursor.fetchall()]
                 
                 # Ensure default group is always included (in memory)
                 default_group_exists = any(g['id'] == 'default' for g in groups)
@@ -477,16 +625,19 @@ class CreditDatabase:
             cursor = conn.cursor()
             
             # Update balance (create user if doesn't exist)
-            cursor.execute("""
-                INSERT OR REPLACE INTO credit_users (id, balance, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
+            self.execute_query("""
+                INSERT INTO credit_users (id, balance, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO UPDATE SET
+                    balance = EXCLUDED.balance,
+                    updated_at = CURRENT_TIMESTAMP
             """, (user_id, new_balance))
             
             # Log transaction
-            cursor.execute("""
+            self.execute_query("""
                 INSERT INTO credit_transactions 
                 (user_id, amount, transaction_type, reason, actor, balance_after)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
             """, (user_id, new_balance, transaction_type, reason, actor, new_balance))
             
             conn.commit()
@@ -498,24 +649,22 @@ class CreditDatabase:
                       cached_tokens: Optional[int] = None, reasoning_tokens: Optional[int] = None) -> tuple[float, float]:
         """Deduct credits from user and return (deducted_amount, new_balance)"""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
             # Get current balance
-            cursor.execute("SELECT balance FROM credit_users WHERE id = ?", (user_id,))
-            row = cursor.fetchone()
+            row = self.fetch_one("SELECT balance FROM credit_users WHERE id = %s", (user_id,))
             current_balance = row['balance'] if row else 0.0
             # Calculate actual deduction
             deducted = min(current_balance, amount)
             new_balance = max(0.0, current_balance - amount)
             # Update balance
-            cursor.execute("""
-                UPDATE credit_users SET balance = ?, updated_at = CURRENT_TIMESTAMP 
-                WHERE id = ?
+            self.execute_query("""
+                UPDATE credit_users SET balance = %s, updated_at = CURRENT_TIMESTAMP 
+                WHERE id = %s
             """, (new_balance, user_id))
             # Log transaction
-            cursor.execute("""
+            self.execute_query("""
                 INSERT INTO credit_transactions 
                 (user_id, amount, transaction_type, reason, actor, balance_after, model_id, prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (user_id, -deducted, "deduct", reason, actor, new_balance, model_id, prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens))
             conn.commit()
             
@@ -527,39 +676,32 @@ class CreditDatabase:
     
     def add_user_to_group(self, user_id: str, group_id: str) -> bool:
         """Add user to a group"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
-                VALUES (?, ?)
-            """, (user_id, group_id))
-            conn.commit()
-            return cursor.rowcount > 0
+        self.execute_query("""
+            INSERT INTO credit_user_groups (user_id, group_id)
+            VALUES (%s, %s)
+            ON CONFLICT (user_id, group_id) DO NOTHING
+        """, (user_id, group_id))
+        return True
     
     def remove_user_from_group(self, user_id: str, group_id: str) -> bool:
         """Remove user from a group"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                DELETE FROM credit_user_groups
-                WHERE user_id = ? AND group_id = ?
-            """, (user_id, group_id))
-            conn.commit()
-            return cursor.rowcount > 0
+        self.execute_query("""
+            DELETE FROM credit_user_groups
+            WHERE user_id = %s AND group_id = %s
+        """, (user_id, group_id))
+        return True
     
     def set_user_groups(self, user_id: str, group_ids: List[str]) -> bool:
         """Set user's group memberships (replaces all existing memberships)"""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
             # Remove all existing memberships
-            cursor.execute("DELETE FROM credit_user_groups WHERE user_id = ?", (user_id,))
+            self.execute_query("DELETE FROM credit_user_groups WHERE user_id = %s", (user_id,))
             
             # Add new memberships
             for group_id in group_ids:
-                cursor.execute("""
+                self.execute_query("""
                     INSERT INTO credit_user_groups (user_id, group_id)
-                    VALUES (?, ?)
+                    VALUES (%s, %s)
                 """, (user_id, group_id))
             
             conn.commit()
@@ -567,41 +709,35 @@ class CreditDatabase:
     
     def get_user_groups(self, user_id: str) -> List[Dict[str, Any]]:
         """Get all groups for a user"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT cg.*
-                FROM credit_groups cg
-                JOIN credit_user_groups cug ON cg.id = cug.group_id
-                WHERE cug.user_id = ?
-                ORDER BY cg.name
-            """, (user_id,))
-            return [dict(row) for row in cursor.fetchall()]
+        return self.fetch_all("""
+            SELECT cg.*
+            FROM credit_groups cg
+            JOIN credit_user_groups cug ON cg.id = cug.group_id
+            WHERE cug.user_id = %s
+            ORDER BY cg.name
+        """, (user_id,))
     
     def assign_users_without_groups_to_default(self) -> int:
         """Assign users without any group memberships to the default system group"""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
             # Find users without any group memberships
-            cursor.execute("""
+            users_without_groups = self.fetch_all("""
                 SELECT u.id 
                 FROM credit_users u
                 LEFT JOIN credit_user_groups ug ON u.id = ug.user_id
                 WHERE ug.user_id IS NULL
             """)
             
-            users_without_groups = cursor.fetchall()
             assigned_count = 0
             
             for user_row in users_without_groups:
-                user_id = user_row[0]
-                cursor.execute("""
-                    INSERT OR IGNORE INTO credit_user_groups (user_id, group_id)
-                    VALUES (?, 'default')
+                user_id = user_row['id']
+                self.execute_query("""
+                    INSERT INTO credit_user_groups (user_id, group_id)
+                    VALUES (%s, 'default')
+                    ON CONFLICT (user_id, group_id) DO NOTHING
                 """, (user_id,))
-                if cursor.rowcount > 0:
-                    assigned_count += 1
+                assigned_count += 1
             
             conn.commit()
             
@@ -629,21 +765,20 @@ class CreditDatabase:
                     group_name = group["name"] or group_id
                     
                     # Check if group exists
-                    cursor.execute("SELECT id FROM credit_groups WHERE id = ?", (group_id,))
-                    exists = cursor.fetchone()
+                    exists = self.fetch_one("SELECT id FROM credit_groups WHERE id = %s", (group_id,))
                     
                     if not exists:
                         # Create new group with default 1000 credits (OpenWebUI groups are not system groups)
-                        cursor.execute("""
+                        self.execute_query("""
                             INSERT INTO credit_groups (id, name, default_credits, is_system_group)
-                            VALUES (?, ?, ?, 0)
-                        """, (group_id, group_name, 1000.0))
+                            VALUES (%s, %s, %s, %s)
+                        """, (group_id, group_name, 1000.0, 0))
                         synced_count += 1
                         print(f"✅ Created new group: {group_name} ({group_id})")
                     else:
                         # Update group name if needed, but preserve is_system_group flag
-                        cursor.execute("""
-                            UPDATE credit_groups SET name = ? WHERE id = ?
+                        self.execute_query("""
+                            UPDATE credit_groups SET name = %s WHERE id = %s
                         """, (group_name, group_id))
                 
                 conn.commit()
@@ -719,14 +854,14 @@ class CreditDatabase:
                     cursor = conn.cursor()
                     
                     # Clear all existing memberships
-                    cursor.execute("DELETE FROM credit_user_groups")
+                    self.execute_query("DELETE FROM credit_user_groups")
                     
                     # Add new memberships
                     for user_id, group_ids in user_groups_map.items():
                         for group_id in group_ids:
-                            cursor.execute("""
+                            self.execute_query("""
                                 INSERT INTO credit_user_groups (user_id, group_id)
-                                VALUES (?, ?)
+                                VALUES (%s, %s)
                             """, (user_id, group_id))
                         synced_count += 1
                     
@@ -744,117 +879,99 @@ class CreditDatabase:
     # Model operations
     def get_model_pricing(self, model_id: str) -> Optional[Dict[str, Any]]:
         """Get model pricing information"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM credit_models WHERE id = ?", (model_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
+        return self.fetch_one("SELECT * FROM credit_models WHERE id = %s", (model_id,))
     
     def get_all_models(self) -> List[Dict[str, Any]]:
         """Get all model pricing information"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM credit_models ORDER BY name")
-            return [dict(row) for row in cursor.fetchall()]
+        return self.fetch_all("SELECT * FROM credit_models ORDER BY name")
     
     def update_model_availability(self, model_id: str, is_available: bool) -> bool:
         """Update model availability status only"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE credit_models SET is_available = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (is_available, model_id))
-            conn.commit()
-            return cursor.rowcount > 0
+        self.execute_query("""
+            UPDATE credit_models SET is_available = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (is_available, model_id))
+        return True
 
     def update_model_free_status(self, model_id: str, is_free: bool) -> bool:
         """Update model free status only"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE credit_models SET is_free = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (is_free, model_id))
-            conn.commit()
-            return cursor.rowcount > 0
+        self.execute_query("""
+            UPDATE credit_models SET is_free = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (is_free, model_id))
+        return True
 
     def update_model_restriction_status(self, model_id: str, is_restricted: bool) -> bool:
         """Update model restriction status only"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE credit_models SET is_restricted = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (is_restricted, model_id))
-            conn.commit()
-            return cursor.rowcount > 0
+        self.execute_query("""
+            UPDATE credit_models SET is_restricted = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (is_restricted, model_id))
+        return True
 
     def update_model_name(self, model_id: str, name: str) -> bool:
         """Update model name only"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE credit_models SET name = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (name, model_id))
-            conn.commit()
-            return cursor.rowcount > 0
+        self.execute_query("""
+            UPDATE credit_models SET name = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (name, model_id))
+        return True
 
     def update_model_pricing(self, model_id: str, name: str, context_price: float, 
                            generation_price: float, is_available: bool = True, is_free: bool = False, is_restricted: bool = False) -> bool:
         """Update model pricing, availability status, free status, and restriction status"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT OR REPLACE INTO credit_models (id, name, context_price, generation_price, is_available, is_free, is_restricted, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (model_id, name, context_price, generation_price, is_available, is_free, is_restricted))
-            conn.commit()
-            return True
+        self.execute_query("""
+            INSERT INTO credit_models (id, name, context_price, generation_price, is_available, is_free, is_restricted, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                context_price = EXCLUDED.context_price,
+                generation_price = EXCLUDED.generation_price,
+                is_available = EXCLUDED.is_available,
+                is_free = EXCLUDED.is_free,
+                is_restricted = EXCLUDED.is_restricted,
+                updated_at = CURRENT_TIMESTAMP
+        """, (model_id, name, context_price, generation_price, is_available, is_free, is_restricted))
+        return True
     
     # Group operations
     def get_all_groups(self) -> List[Dict[str, Any]]:
         """Get all credit groups"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM credit_groups ORDER BY name")
-            return [dict(row) for row in cursor.fetchall()]
+        return self.fetch_all("SELECT * FROM credit_groups ORDER BY name")
     
     def update_group(self, group_id: str, name: str, default_credits: float, is_system_group: bool = False) -> bool:
         """Update group information"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT OR REPLACE INTO credit_groups (id, name, default_credits, is_system_group, updated_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, (group_id, name, default_credits, is_system_group))
-            conn.commit()
-            return True
+        self.execute_query("""
+            INSERT INTO credit_groups (id, name, default_credits, is_system_group, updated_at)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                default_credits = EXCLUDED.default_credits,
+                is_system_group = EXCLUDED.is_system_group,
+                updated_at = CURRENT_TIMESTAMP
+        """, (group_id, name, default_credits, is_system_group))
+        return True
     
     # Transaction history
     def get_user_transactions(self, user_id: str, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
         """Get user's transaction history with pagination"""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
             # Get total count
-            cursor.execute("""
+            total_result = self.fetch_one("""
                 SELECT COUNT(*) as total
                 FROM credit_transactions ct
-                WHERE ct.user_id = ?
+                WHERE ct.user_id = %s
             """, (user_id,))
-            total = cursor.fetchone()['total']
+            total = total_result['total'] if total_result else 0
             
             # Get paginated results
-            cursor.execute("""
+            transactions = self.fetch_all("""
                 SELECT ct.*
                 FROM credit_transactions ct
-                WHERE ct.user_id = ? 
+                WHERE ct.user_id = %s 
                 ORDER BY ct.created_at DESC 
-                LIMIT ? OFFSET ?
+                LIMIT %s OFFSET %s
             """, (user_id, limit, offset))
-            transactions = [dict(row) for row in cursor.fetchall()]
             
             return {
                 'transactions': transactions,
@@ -868,23 +985,20 @@ class CreditDatabase:
     def get_all_transactions(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
         """Get all transactions with pagination"""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
             # Get total count
-            cursor.execute("""
+            total_result = self.fetch_one("""
                 SELECT COUNT(*) as total
                 FROM credit_transactions ct
             """)
-            total = cursor.fetchone()['total']
+            total = total_result['total'] if total_result else 0
             
             # Get paginated results
-            cursor.execute("""
+            transactions = self.fetch_all("""
                 SELECT ct.*
                 FROM credit_transactions ct
                 ORDER BY ct.created_at DESC 
-                LIMIT ? OFFSET ?
+                LIMIT %s OFFSET %s
             """, (limit, offset))
-            transactions = [dict(row) for row in cursor.fetchall()]
             
             return {
                 'transactions': transactions,
@@ -898,33 +1012,27 @@ class CreditDatabase:
     # Logging
     def log_action(self, log_type: str, actor: str, message: str, metadata: Optional[Dict] = None):
         """Log system action"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO credit_logs (log_type, actor, message, metadata)
-                VALUES (?, ?, ?, ?)
-            """, (log_type, actor, message, json.dumps(metadata) if metadata else None))
-            conn.commit()
+        self.execute_query("""
+            INSERT INTO credit_logs (log_type, actor, message, metadata)
+            VALUES (%s, %s, %s, %s)
+        """, (log_type, actor, message, json.dumps(metadata) if metadata else None))
     
     def get_logs(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
         """Get system logs with pagination"""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
             # Get total count
-            cursor.execute("""
+            total_result = self.fetch_one("""
                 SELECT COUNT(*) as total
                 FROM credit_logs
             """)
-            total = cursor.fetchone()['total']
+            total = total_result['total'] if total_result else 0
             
             # Get paginated results
-            cursor.execute("""
+            logs = self.fetch_all("""
                 SELECT * FROM credit_logs 
                 ORDER BY created_at DESC 
-                LIMIT ? OFFSET ?
+                LIMIT %s OFFSET %s
             """, (limit, offset))
-            logs = [dict(row) for row in cursor.fetchall()]
             
             return {
                 'logs': logs,
@@ -937,11 +1045,8 @@ class CreditDatabase:
     
     def delete_log_entry(self, log_id: int) -> bool:
         """Delete a specific log entry by ID"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM credit_logs WHERE id = ?", (log_id,))
-            conn.commit()
-            return cursor.rowcount > 0
+        self.execute_query("DELETE FROM credit_logs WHERE id = %s", (log_id,))
+        return True
 
     def get_user_name_from_openwebui(self, user_id: str) -> Optional[str]:
         """Get user name from OpenWebUI database"""
@@ -1110,30 +1215,19 @@ class CreditDatabase:
     
     def get_setting(self, key: str, default_value: Optional[str] = None) -> Optional[str]:
         """Get a setting value"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT value FROM credit_settings WHERE key = ?", (key,))
-                row = cursor.fetchone()
-                return row['value'] if row else default_value
-        except Exception as e:
-            print(f"Error getting setting {key}: {e}")
-            return default_value
+        row = self.fetch_one("SELECT value FROM credit_settings WHERE key = %s", (key,))
+        return row['value'] if row else default_value
     
     def set_setting(self, key: str, value: str) -> bool:
         """Set a setting value"""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT OR REPLACE INTO credit_settings (key, value, updated_at) 
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                """, (key, value))
-                conn.commit()
-                return True
-        except Exception as e:
-            print(f"Error setting {key}: {e}")
-            return False
+        self.execute_query("""
+            INSERT INTO credit_settings (key, value, updated_at) 
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (key) DO UPDATE SET
+                value = EXCLUDED.value,
+                updated_at = CURRENT_TIMESTAMP
+        """, (key, value))
+        return True
     
     def get_usd_to_credit_ratio(self) -> float:
         """Get the current USD to credit conversion ratio"""
@@ -1175,11 +1269,10 @@ class CreditDatabase:
                           error_message: Optional[str] = None, metadata: Optional[Dict] = None) -> int:
         """Record a credit reset event"""
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+            result = self.execute_query("""
                 INSERT INTO credit_reset_tracking 
                 (reset_type, reset_date, users_affected, total_credits_reset, status, error_message, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (
                 reset_type, 
                 reset_date, 
@@ -1189,50 +1282,42 @@ class CreditDatabase:
                 error_message,
                 json.dumps(metadata) if metadata else None
             ))
-            reset_id = cursor.lastrowid
-            conn.commit()
             
             # Also log the event
             self.log_action(
                 log_type="reset_event",
                 actor="system",
                 message=f"Credit reset {reset_type} for {users_affected} users on {reset_date}",
-                metadata={"reset_id": reset_id, "total_credits": total_credits_reset}
+                metadata={"reset_id": "pending", "total_credits": total_credits_reset}
             )
             
-            return reset_id or 0  # Ensure we return an int
+            return 0  # We don't have lastrowid for PostgreSQL in our helper
 
     def get_last_reset_date(self, reset_type: str = 'monthly') -> Optional[str]:
         """Get the date of the last successful reset of the specified type"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT reset_date FROM credit_reset_tracking 
-                WHERE reset_type = ? AND status = 'completed'
-                ORDER BY reset_date DESC LIMIT 1
-            """, (reset_type,))
-            row = cursor.fetchone()
-            return row[0] if row else None
+        row = self.fetch_one("""
+            SELECT reset_date FROM credit_reset_tracking 
+            WHERE reset_type = %s AND status = 'completed'
+            ORDER BY reset_date DESC LIMIT 1
+        """, (reset_type,))
+        return row['reset_date'] if row else None
 
     def get_reset_history(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Get the history of credit resets"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM credit_reset_tracking 
-                ORDER BY reset_timestamp DESC LIMIT ?
-            """, (limit,))
-            
-            results = []
-            for row in cursor.fetchall():
-                result = dict(row)
-                if result['metadata']:
-                    try:
-                        result['metadata'] = json.loads(result['metadata'])
-                    except json.JSONDecodeError:
-                        result['metadata'] = {}
-                results.append(result)
-            return results
+        results = self.fetch_all("""
+            SELECT * FROM credit_reset_tracking 
+            ORDER BY reset_timestamp DESC LIMIT %s
+        """, (limit,))
+        
+        for result in results:
+            if result['metadata']:
+                try:
+                    result['metadata'] = json.loads(result['metadata'])
+                except json.JSONDecodeError:
+                    result['metadata'] = {}
+            else:
+                result['metadata'] = {}
+        return results
 
     def needs_monthly_reset(self) -> bool:
         """Check if a monthly reset is needed"""
@@ -1285,17 +1370,28 @@ class CreditDatabase:
                 default_group_credits = default_group_row[0] if default_group_row else 100.0
                 
                 # Get ALL users with their explicit group credits (not including default group)
-                cursor.execute("""
-                    SELECT u.id, u.balance,
-                           COALESCE(SUM(CASE WHEN g.id != 'default' THEN g.default_credits ELSE 0 END), 0) as regular_group_credits,
-                           GROUP_CONCAT(CASE WHEN g.id != 'default' THEN g.name END) as group_names
-                    FROM credit_users u
-                    LEFT JOIN credit_user_groups ug ON u.id = ug.user_id
-                    LEFT JOIN credit_groups g ON ug.group_id = g.id
-                    GROUP BY u.id, u.balance
-                """)
+                if self.db_type == 'postgresql':
+                    users_query = """
+                        SELECT u.id, u.balance,
+                               COALESCE(SUM(CASE WHEN g.id != 'default' THEN g.default_credits ELSE 0 END), 0) as regular_group_credits,
+                               STRING_AGG(CASE WHEN g.id != 'default' THEN g.name END, ', ') as group_names
+                        FROM credit_users u
+                        LEFT JOIN credit_user_groups ug ON u.id = ug.user_id
+                        LEFT JOIN credit_groups g ON ug.group_id = g.id
+                        GROUP BY u.id, u.balance
+                    """
+                else:
+                    users_query = """
+                        SELECT u.id, u.balance,
+                               COALESCE(SUM(CASE WHEN g.id != 'default' THEN g.default_credits ELSE 0 END), 0) as regular_group_credits,
+                               GROUP_CONCAT(CASE WHEN g.id != 'default' THEN g.name END) as group_names
+                        FROM credit_users u
+                        LEFT JOIN credit_user_groups ug ON u.id = ug.user_id
+                        LEFT JOIN credit_groups g ON ug.group_id = g.id
+                        GROUP BY u.id, u.balance
+                    """
                 
-                users_to_reset = cursor.fetchall()
+                users_to_reset = self.fetch_all(users_query)
                 users_affected = 0
                 total_credits_reset = 0.0
                 
@@ -1316,17 +1412,17 @@ class CreditDatabase:
                     total_default_credits = regular_group_credits + default_group_credits
                     
                     # Update previous month's statistics with final balance before reset
-                    cursor.execute("""
+                    self.execute_query("""
                         UPDATE credit_usage_statistics 
-                        SET balance_before_reset = ?
-                        WHERE user_id = ? AND year = ? AND month = ?
+                        SET balance_before_reset = %s
+                        WHERE user_id = %s AND year = %s AND month = %s
                     """, (current_balance, user_id, previous_year, previous_month))
                     
                     # Update user balance to sum of all group default credits (including default group)
-                    cursor.execute("""
+                    self.execute_query("""
                         UPDATE credit_users 
-                        SET balance = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
+                        SET balance = %s, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
                     """, (total_default_credits, user_id))
                     
                     # Record transaction with proper group listing
@@ -1334,10 +1430,10 @@ class CreditDatabase:
                     if group_names and group_names != "No groups":
                         display_groups = f"Default Users, {group_names}"
                     
-                    cursor.execute("""
+                    self.execute_query("""
                         INSERT INTO credit_transactions 
                         (user_id, amount, transaction_type, reason, actor, balance_after)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                     """, (
                         user_id,
                         total_default_credits - current_balance,
@@ -1407,19 +1503,17 @@ class CreditDatabase:
                 cursor = conn.cursor()
                 
                 # Get current statistics for this user and month
-                cursor.execute("""
+                row = self.fetch_one("""
                     SELECT credits_used, transactions_count, models_used 
                     FROM credit_usage_statistics 
-                    WHERE user_id = ? AND year = ? AND month = ?
+                    WHERE user_id = %s AND year = %s AND month = %s
                 """, (user_id, year, month))
-                
-                row = cursor.fetchone()
                 
                 if row:
                     # Update existing record
-                    current_credits = row[0]
-                    current_transactions = row[1]
-                    models_used_json = row[2] or '[]'
+                    current_credits = row['credits_used']
+                    current_transactions = row['transactions_count']
+                    models_used_json = row['models_used'] or '[]'
                     
                     try:
                         models_used = json.loads(models_used_json)
@@ -1430,10 +1524,10 @@ class CreditDatabase:
                     if model_id and model_id not in models_used:
                         models_used.append(model_id)
                     
-                    cursor.execute("""
+                    self.execute_query("""
                         UPDATE credit_usage_statistics 
-                        SET credits_used = ?, transactions_count = ?, models_used = ?, updated_at = CURRENT_TIMESTAMP
-                        WHERE user_id = ? AND year = ? AND month = ?
+                        SET credits_used = %s, transactions_count = %s, models_used = %s, updated_at = CURRENT_TIMESTAMP
+                        WHERE user_id = %s AND year = %s AND month = %s
                     """, (
                         current_credits + amount,
                         current_transactions + 1,
@@ -1443,13 +1537,11 @@ class CreditDatabase:
                 else:
                     # Create new record
                     models_used = [model_id] if model_id else []
-                    cursor.execute("""
+                    self.execute_query("""
                         INSERT INTO credit_usage_statistics 
                         (user_id, year, month, credits_used, transactions_count, models_used)
-                        VALUES (?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                     """, (user_id, year, month, amount, 1, json.dumps(models_used)))
-                
-                conn.commit()
                 
         except Exception as e:
             # Log error but don't fail the main transaction
@@ -1462,87 +1554,75 @@ class CreditDatabase:
 
     def get_user_usage_statistics(self, user_id: str, limit: int = 12) -> List[Dict[str, Any]]:
         """Get user's monthly usage statistics"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM credit_usage_statistics 
-                WHERE user_id = ? 
-                ORDER BY year DESC, month DESC 
-                LIMIT ?
-            """, (user_id, limit))
-            
-            results = []
-            for row in cursor.fetchall():
-                result = dict(row)
-                if result['models_used']:
-                    try:
-                        result['models_used'] = json.loads(result['models_used'])
-                    except json.JSONDecodeError:
-                        result['models_used'] = []
-                else:
+        results = self.fetch_all("""
+            SELECT * FROM credit_usage_statistics 
+            WHERE user_id = %s 
+            ORDER BY year DESC, month DESC 
+            LIMIT %s
+        """, (user_id, limit))
+        
+        for result in results:
+            if result['models_used']:
+                try:
+                    result['models_used'] = json.loads(result['models_used'])
+                except json.JSONDecodeError:
                     result['models_used'] = []
-                results.append(result)
-            return results
+            else:
+                result['models_used'] = []
+        return results
 
     def get_all_usage_statistics(self, year: Optional[int] = None, month: Optional[int] = None, limit: int = 100) -> List[Dict[str, Any]]:
         """Get usage statistics for all users, optionally filtered by year/month"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            if year and month:
-                cursor.execute("""
-                    SELECT u.*, cu.balance as current_balance
-                    FROM credit_usage_statistics u
-                    LEFT JOIN credit_users cu ON u.user_id = cu.id
-                    WHERE u.year = ? AND u.month = ?
-                    ORDER BY u.credits_used DESC
-                    LIMIT ?
-                """, (year, month, limit))
-            elif year:
-                cursor.execute("""
-                    SELECT u.*, cu.balance as current_balance
-                    FROM credit_usage_statistics u
-                    LEFT JOIN credit_users cu ON u.user_id = cu.id
-                    WHERE u.year = ?
-                    ORDER BY u.year DESC, u.month DESC, u.credits_used DESC
-                    LIMIT ?
-                """, (year, limit))
-            else:
-                cursor.execute("""
-                    SELECT u.*, cu.balance as current_balance
-                    FROM credit_usage_statistics u
-                    LEFT JOIN credit_users cu ON u.user_id = cu.id
-                    ORDER BY u.year DESC, u.month DESC, u.credits_used DESC
-                    LIMIT ?
-                """, (limit,))
-            
-            results = []
-            for row in cursor.fetchall():
-                result = dict(row)
-                if result['models_used']:
-                    try:
-                        result['models_used'] = json.loads(result['models_used'])
-                    except json.JSONDecodeError:
-                        result['models_used'] = []
-                else:
+        if year and month:
+            results = self.fetch_all("""
+                SELECT u.*, cu.balance as current_balance
+                FROM credit_usage_statistics u
+                LEFT JOIN credit_users cu ON u.user_id = cu.id
+                WHERE u.year = %s AND u.month = %s
+                ORDER BY u.credits_used DESC
+                LIMIT %s
+            """, (year, month, limit))
+        elif year:
+            results = self.fetch_all("""
+                SELECT u.*, cu.balance as current_balance
+                FROM credit_usage_statistics u
+                LEFT JOIN credit_users cu ON u.user_id = cu.id
+                WHERE u.year = %s
+                ORDER BY u.year DESC, u.month DESC, u.credits_used DESC
+                LIMIT %s
+            """, (year, limit))
+        else:
+            results = self.fetch_all("""
+                SELECT u.*, cu.balance as current_balance
+                FROM credit_usage_statistics u
+                LEFT JOIN credit_users cu ON u.user_id = cu.id
+                ORDER BY u.year DESC, u.month DESC, u.credits_used DESC
+                LIMIT %s
+            """, (limit,))
+        
+        for result in results:
+            if result['models_used']:
+                try:
+                    result['models_used'] = json.loads(result['models_used'])
+                except json.JSONDecodeError:
                     result['models_used'] = []
-                
-                # Get group names for this user
-                user_id = result['user_id']
-                cursor.execute("""
-                    SELECT cg.name
-                    FROM credit_groups cg
-                    JOIN credit_user_groups cug ON cg.id = cug.group_id
-                    WHERE cug.user_id = ?
-                    ORDER BY cg.name
-                """, (user_id,))
-                
-                group_rows = cursor.fetchall()
-                group_names = [row[0] for row in group_rows]
-                result['group_name'] = ', '.join(group_names) if group_names else 'No groups'
-                
-                results.append(result)
-            return results
+            else:
+                result['models_used'] = []
+            
+            # Get group names for this user
+            user_id = result['user_id']
+            group_rows = self.fetch_all("""
+                SELECT cg.name
+                FROM credit_groups cg
+                JOIN credit_user_groups cug ON cg.id = cug.group_id
+                WHERE cug.user_id = %s
+                ORDER BY cg.name
+            """, (user_id,))
+            
+            group_names = [row['name'] for row in group_rows]
+            result['group_name'] = ', '.join(group_names) if group_names else 'No groups'
+            
+        return results
 
     def get_current_month_pending_usage(self, user_id: str) -> Dict[str, Any]:
         """Get current month's usage for a user (pending/in-progress)"""
@@ -1552,33 +1632,29 @@ class CreditDatabase:
         year = current_date.year
         month = current_date.month
         
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM credit_usage_statistics 
-                WHERE user_id = ? AND year = ? AND month = ?
-            """, (user_id, year, month))
-            
-            row = cursor.fetchone()
-            if row:
-                result = dict(row)
-                if result['models_used']:
-                    try:
-                        result['models_used'] = json.loads(result['models_used'])
-                    except json.JSONDecodeError:
-                        result['models_used'] = []
-                else:
-                    result['models_used'] = []
-                return result
+        row = self.fetch_one("""
+            SELECT * FROM credit_usage_statistics 
+            WHERE user_id = %s AND year = %s AND month = %s
+        """, (user_id, year, month))
+        
+        if row:
+            if row['models_used']:
+                try:
+                    row['models_used'] = json.loads(row['models_used'])
+                except json.JSONDecodeError:
+                    row['models_used'] = []
             else:
-                return {
-                    'user_id': user_id,
-                    'year': year,
-                    'month': month,
-                    'credits_used': 0.0,
-                    'transactions_count': 0,
-                    'models_used': []
-                }
+                row['models_used'] = []
+            return row
+        else:
+            return {
+                'user_id': user_id,
+                'year': year,
+                'month': month,
+                'credits_used': 0.0,
+                'transactions_count': 0,
+                'models_used': []
+            }
 
     def get_monthly_usage_summary(self, year: Optional[int] = None, month: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Get summary statistics for a specific month"""
@@ -1634,41 +1710,35 @@ class CreditDatabase:
     def initialize_monthly_statistics_for_reset(self, year: int, month: int):
         """Initialize statistics for all users when a new month starts (called during reset)"""
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
+            # Get all users
+            users = self.fetch_all("SELECT id FROM credit_users")
+            
+            created_count = 0
+            for user in users:
+                user_id = user['id']
                 
-                # Get all users
-                cursor.execute("SELECT id FROM credit_users")
-                users = cursor.fetchall()
+                # Check if record already exists
+                existing = self.fetch_one("""
+                    SELECT id FROM credit_usage_statistics 
+                    WHERE user_id = %s AND year = %s AND month = %s
+                """, (user_id, year, month))
                 
-                created_count = 0
-                for user in users:
-                    user_id = user[0]
-                    
-                    # Check if record already exists
-                    cursor.execute("""
-                        SELECT id FROM credit_usage_statistics 
-                        WHERE user_id = ? AND year = ? AND month = ?
+                if not existing:
+                    # Create new record with zero usage
+                    self.execute_query("""
+                        INSERT INTO credit_usage_statistics 
+                        (user_id, year, month, credits_used, transactions_count, models_used)
+                        VALUES (%s, %s, %s, 0.0, 0, '[]')
                     """, (user_id, year, month))
-                    
-                    if not cursor.fetchone():
-                        # Create new record with zero usage
-                        cursor.execute("""
-                            INSERT INTO credit_usage_statistics 
-                            (user_id, year, month, credits_used, transactions_count, models_used)
-                            VALUES (?, ?, ?, 0.0, 0, '[]')
-                        """, (user_id, year, month))
-                        created_count += 1
-                
-                conn.commit()
-                
-                self.log_action(
-                    log_type="statistics_initialization",
-                    actor="system",
-                    message=f"Initialized monthly statistics for {created_count} users for {year}-{month:02d}",
-                    metadata={"year": year, "month": month, "users_initialized": created_count}
-                )
-                
+                    created_count += 1
+            
+            self.log_action(
+                log_type="statistics_initialization",
+                actor="system",
+                message=f"Initialized monthly statistics for {created_count} users for {year}-{month:02d}",
+                metadata={"year": year, "month": month, "users_initialized": created_count}
+            )
+            
         except Exception as e:
             self.log_action(
                 log_type="statistics_error",
