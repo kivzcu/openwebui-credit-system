@@ -40,9 +40,15 @@ class CreditDatabase:
         """Execute a query with proper parameter formatting for the database type"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            # Support queries written with either '?' or '%s' placeholders.
+            # For PostgreSQL we need '%s', for SQLite we need '?'. Normalize accordingly.
             if self.db_type == 'postgresql':
-                # PostgreSQL uses %s
+                # Convert '?' placeholders to '%s' for psycopg2
                 query = query.replace('?', '%s')
+            else:
+                # Convert '%s' placeholders to '?' for sqlite3
+                if '%s' in query:
+                    query = query.replace('%s', '?')
             cursor.execute(query, params)
             conn.commit()
             return cursor
@@ -53,6 +59,9 @@ class CreditDatabase:
             cursor = conn.cursor()
             if self.db_type == 'postgresql':
                 query = query.replace('?', '%s')
+            else:
+                if '%s' in query:
+                    query = query.replace('%s', '?')
             cursor.execute(query, params)
             row = cursor.fetchone()
             return dict(row) if row else None
@@ -63,6 +72,9 @@ class CreditDatabase:
             cursor = conn.cursor()
             if self.db_type == 'postgresql':
                 query = query.replace('?', '%s')
+            else:
+                if '%s' in query:
+                    query = query.replace('%s', '?')
             cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
     
@@ -1401,30 +1413,50 @@ class CreditDatabase:
                           total_credits_reset: float, status: str = 'completed', 
                           error_message: Optional[str] = None, metadata: Optional[Dict] = None) -> int:
         """Record a credit reset event"""
+        # Use explicit connection so we can obtain lastrowid for sqlite
         with self.get_connection() as conn:
-            result = self.execute_query("""
+            cursor = conn.cursor()
+            # Normalize placeholder for DB type
+            query = """
                 INSERT INTO credit_reset_tracking 
                 (reset_type, reset_date, users_affected, total_credits_reset, status, error_message, metadata)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (
-                reset_type, 
-                reset_date, 
-                users_affected, 
-                total_credits_reset, 
-                status, 
+            """
+            if self.db_type == 'postgresql':
+                query_exec = query.replace('?', '%s')
+            else:
+                if '%s' in query:
+                    query_exec = query.replace('%s', '?')
+                else:
+                    query_exec = query
+
+            cursor.execute(query_exec, (
+                reset_type,
+                reset_date,
+                users_affected,
+                total_credits_reset,
+                status,
                 error_message,
                 json.dumps(metadata) if metadata else None
             ))
-            
+            conn.commit()
+
             # Also log the event
-            self.log_action(
-                log_type="reset_event",
-                actor="system",
-                message=f"Credit reset {reset_type} for {users_affected} users on {reset_date}",
-                metadata={"reset_id": "pending", "total_credits": total_credits_reset}
-            )
-            
-            return 0  # We don't have lastrowid for PostgreSQL in our helper
+            try:
+                self.log_action(
+                    log_type="reset_event",
+                    actor="system",
+                    message=f"Credit reset {reset_type} for {users_affected} users on {reset_date}",
+                    metadata={"total_credits": total_credits_reset}
+                )
+            except Exception:
+                pass
+
+            # Return lastrowid where available (sqlite). For PostgreSQL we fall back to 0.
+            try:
+                return int(cursor.lastrowid) if cursor.lastrowid is not None else 0
+            except Exception:
+                return 0
 
     def get_last_reset_date(self, reset_type: str = 'monthly') -> Optional[str]:
         """Get the date of the last successful reset of the specified type"""
@@ -1433,7 +1465,9 @@ class CreditDatabase:
             WHERE reset_type = %s AND status = 'completed'
             ORDER BY reset_date DESC LIMIT 1
         """, (reset_type,))
-        return row['reset_date'] if row else None
+        if not row:
+            return None
+        return row.get('reset_date') if isinstance(row, dict) else (row[0] if row else None)
 
     def get_reset_history(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Get the history of credit resets"""
@@ -1459,23 +1493,37 @@ class CreditDatabase:
         current_date = datetime.now(timezone.utc)
         current_month_start = current_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         
+        from datetime import date as datecls
+
         last_reset_date = self.get_last_reset_date('monthly')
-        
+
         if last_reset_date is None:
             return True  # No reset recorded yet
-            
-        # Parse the last reset date
+
+        # Normalize last_reset_date into a datetime
         try:
-            # Parse the date string and make it timezone-aware
-            last_reset = datetime.strptime(last_reset_date, '%Y-%m-%d')
-            # Make timezone-aware for comparison
-            last_reset = last_reset.replace(tzinfo=timezone.utc)
+            if isinstance(last_reset_date, datetime):
+                last_reset = last_reset_date
+            elif isinstance(last_reset_date, datecls):
+                last_reset = datetime(last_reset_date.year, last_reset_date.month, last_reset_date.day, tzinfo=timezone.utc)
+            elif isinstance(last_reset_date, str):
+                # Try ISO date first, then fallback to YYYY-MM-DD
+                try:
+                    last_reset = datetime.fromisoformat(last_reset_date)
+                except Exception:
+                    last_reset = datetime.strptime(last_reset_date, '%Y-%m-%d')
+                if last_reset.tzinfo is None:
+                    last_reset = last_reset.replace(tzinfo=timezone.utc)
+            else:
+                # Unknown type - assume reset needed
+                return True
+
             last_reset_month_start = last_reset.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            
+
             # If the last reset was in a previous month, we need a new reset
             return last_reset_month_start < current_month_start
-        except ValueError:
-            return True  # If we can't parse the date, assume we need a reset
+        except Exception:
+            return True  # On any parse error, assume we need a reset
 
     def perform_monthly_reset(self) -> Dict[str, Any]:
         """Perform monthly credit reset for all users"""
@@ -1535,10 +1583,21 @@ class CreditDatabase:
                     previous_year -= 1
                 
                 for user in users_to_reset:
-                    user_id = user[0]
-                    current_balance = user[1]
-                    regular_group_credits = user[2]
-                    group_names = user[3] or "No groups"
+                    # fetch_all returns dictionaries for both sqlite3.Row (converted with dict(row))
+                    # and psycopg2 RealDictCursor. However in some codepaths a sequence/tuple
+                    # may still be returned. Handle both shapes robustly.
+                    if isinstance(user, dict):
+                        user_id = user.get('id') or user.get('user_id')
+                        current_balance = user.get('balance', 0.0)
+                        # Alias name used in the query
+                        regular_group_credits = user.get('regular_group_credits', 0.0)
+                        group_names = user.get('group_names') or "No groups"
+                    else:
+                        # Fallback for sequence/tuple rows (legacy codepaths)
+                        user_id = user[0]
+                        current_balance = user[1]
+                        regular_group_credits = user[2]
+                        group_names = user[3] or "No groups"
                     
                     # Calculate total credits: regular group credits + default group credits
                     total_default_credits = regular_group_credits + default_group_credits
