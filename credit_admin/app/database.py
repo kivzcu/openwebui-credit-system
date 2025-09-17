@@ -777,7 +777,9 @@ class CreditDatabase:
                 cursor = conn.cursor()
                 print(f"🔗 Using SQLite for OpenWebUI group sync: {DB_FILE}")
             
-            table_name = "\"group\"" if DATABASE_URL else "'group'"
+            # Use proper identifier quoting: PostgreSQL requires double quotes for reserved words,
+            # SQLite uses plain identifiers (no single quotes).
+            table_name = "\"group\"" if DATABASE_URL else "group"
             cursor.execute(f"SELECT id, name, description FROM {table_name}")
             openwebui_groups = cursor.fetchall()
             
@@ -830,7 +832,7 @@ class CreditDatabase:
         if not DATABASE_URL and not DB_FILE:
             print("❌ OpenWebUI database not configured (DATABASE_URL or OPENWEBUI_DATABASE_PATH environment variable)")
             return False
-            
+
         conn = None
         try:
             if DATABASE_URL:
@@ -840,46 +842,97 @@ class CreditDatabase:
                 conn = sqlite3.connect(DB_FILE)
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
-            
-            table_name = "\"group\"" if DATABASE_URL else "'group'"
-            cursor.execute(f"SELECT id, user_ids FROM {table_name}")
-            groups = cursor.fetchall()
-            
-            user_group_ids = []
-            for group in groups:
-                if DATABASE_URL:
-                    group_id = group[0]
-                    user_ids_str = group[1]
-                else:
-                    group_id = group["id"]
-                    user_ids_str = group["user_ids"]
-                
-                if user_ids_str:
-                    try:
-                        user_ids = json.loads(user_ids_str)
-                        if user_id in user_ids:
+
+            table_name = '"group"' if DATABASE_URL else 'group'
+
+            # Build mapping only for the single user using the same heuristics as the bulk sync
+            user_group_ids: List[str] = []
+
+            try:
+                cursor.execute(f"SELECT * FROM {table_name}")
+                rows = cursor.fetchall()
+                cols = [d[0] for d in cursor.description]
+                candidate_cols = [c for c in ['user_ids', 'users', 'members', 'member_ids', 'user_list'] if c in cols]
+
+                if candidate_cols:
+                    col = candidate_cols[0]
+                    col_idx = {name: i for i, name in enumerate(cols)}
+                    id_idx = col_idx.get('id', 0)
+                    for row in rows:
+                        group_id = row[id_idx] if DATABASE_URL else row['id']
+                        user_ids_val = row[col_idx[col]] if DATABASE_URL else row[col]
+                        if not user_ids_val:
+                            continue
+                        try:
+                            if isinstance(user_ids_val, str):
+                                parsed = json.loads(user_ids_val.strip())
+                            else:
+                                parsed = list(user_ids_val)
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            continue
+                        if user_id in parsed:
                             user_group_ids.append(group_id)
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-            
-            # Update user's group memberships
-            self.set_user_groups(user_id, user_group_ids)
-            
-            return True
-            
-        except Exception as e:
-            print(f"Error syncing user groups for {user_id}: {e}")
-            return False
+                else:
+                    # Try join tables
+                    join_table_candidates = ['group_user', 'user_group', 'group_members', 'group_users', 'user_groups', 'group_member']
+                    found = False
+                    for jt in join_table_candidates:
+                        try:
+                            cursor.execute(f"SELECT group_id FROM {jt} WHERE user_id = %s" if DATABASE_URL else f"SELECT group_id FROM {jt} WHERE user_id = ?", (user_id,))
+                            jt_rows = cursor.fetchall()
+                            if jt_rows:
+                                for r in jt_rows:
+                                    gid = r[0] if DATABASE_URL else r['group_id']
+                                    user_group_ids.append(gid)
+                                found = True
+                                break
+                        except Exception:
+                            continue
+
+                    if not found:
+                        # Fallback: check user table for group/group_id
+                        try:
+                            user_query = f"SELECT group, group_id FROM \"user\" WHERE id = %s" if DATABASE_URL else "SELECT group, group_id FROM user WHERE id = ?"
+                            cursor.execute(user_query, (user_id,))
+                            ur = cursor.fetchone()
+                            if ur:
+                                if DATABASE_URL:
+                                    group_val = ur[0] or ur[1]
+                                else:
+                                    group_val = ur['group'] or ur.get('group_id')
+                                if group_val:
+                                    try:
+                                        if isinstance(group_val, str) and (group_val.strip().startswith('[') or group_val.strip().startswith('{')):
+                                            parsed = json.loads(group_val)
+                                            if isinstance(parsed, list):
+                                                user_group_ids.extend(parsed)
+                                            elif isinstance(parsed, dict):
+                                                ids = parsed.get('group_ids') or parsed.get('user_ids')
+                                                if isinstance(ids, list):
+                                                    user_group_ids.extend(ids)
+                                        else:
+                                            user_group_ids.append(str(group_val))
+                                    except Exception:
+                                        user_group_ids.append(str(group_val))
+                        except Exception:
+                            pass
+
+                # Persist memberships
+                self.set_user_groups(user_id, user_group_ids)
+                return True
+            except Exception as e:
+                print(f"Error syncing user groups for {user_id}: {e}")
+                return False
         finally:
             if conn:
                 conn.close()
-    
+
     def sync_all_user_groups_from_openwebui(self) -> int:
         """Sync all user group memberships from OpenWebUI"""
         if not DATABASE_URL and not DB_FILE:
             print("❌ OpenWebUI database not configured (DATABASE_URL or OPENWEBUI_DATABASE_PATH environment variable)")
             return 0
-            
+
         conn = None
         try:
             if DATABASE_URL:
@@ -891,31 +944,97 @@ class CreditDatabase:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 print(f"🔗 Using SQLite for OpenWebUI user-groups sync: {DB_FILE}")
-            
-            table_name = "\"group\"" if DATABASE_URL else "'group'"
-            cursor.execute(f"SELECT id, user_ids FROM {table_name}")
-            groups = cursor.fetchall()
-            
+
+            table_name = '"group"' if DATABASE_URL else 'group'
+
             # Build user -> groups mapping
             user_groups_map: Dict[str, List[str]] = {}
-            for group in groups:
-                if DATABASE_URL:
-                    group_id = group[0]
-                    user_ids_str = group[1]
+
+            try:
+                cursor.execute(f"SELECT * FROM {table_name}")
+                groups = cursor.fetchall()
+                cols = [d[0] for d in cursor.description]
+
+                candidate_cols = [c for c in ['user_ids', 'users', 'members', 'member_ids', 'user_list'] if c in cols]
+                if candidate_cols:
+                    col = candidate_cols[0]
+                    col_idx = {name: i for i, name in enumerate(cols)}
+                    id_idx = col_idx.get('id', 0)
+
+                    for row in groups:
+                        group_id = row[id_idx] if DATABASE_URL else row['id']
+                        user_ids_val = row[col_idx[col]] if DATABASE_URL else row[col]
+                        if not user_ids_val:
+                            continue
+                        try:
+                            if isinstance(user_ids_val, str):
+                                parsed = json.loads(user_ids_val.strip())
+                            else:
+                                parsed = list(user_ids_val)
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            continue
+                        for uid in parsed:
+                            user_groups_map.setdefault(uid, []).append(group_id)
                 else:
-                    group_id = group["id"]
-                    user_ids_str = group["user_ids"]
-                
-                if user_ids_str:
-                    try:
-                        user_ids = json.loads(user_ids_str)
-                        for user_id in user_ids:
-                            if user_id not in user_groups_map:
-                                user_groups_map[user_id] = []
-                            user_groups_map[user_id].append(group_id)
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-            
+                    # Try join table candidates
+                    join_table_candidates = ['group_user', 'user_group', 'group_members', 'group_users', 'user_groups', 'group_member']
+                    found = False
+                    for jt in join_table_candidates:
+                        try:
+                            cursor.execute(f"SELECT group_id, user_id FROM {jt}")
+                            jt_rows = cursor.fetchall()
+                            if jt_rows:
+                                for r in jt_rows:
+                                    if DATABASE_URL:
+                                        gid, uid = r[0], r[1]
+                                    else:
+                                        gid, uid = r['group_id'], r['user_id']
+                                    user_groups_map.setdefault(uid, []).append(gid)
+                                found = True
+                                break
+                        except Exception:
+                            continue
+
+                    if not found:
+                        # Fallback: check user table for group/group_id field
+                        try:
+                            cursor.execute('SELECT * FROM "user"' if DATABASE_URL else 'SELECT * FROM user')
+                            urows = cursor.fetchall()
+                            ucols = [d[0] for d in cursor.description]
+                            if 'group' in ucols or 'group_id' in ucols:
+                                for ur in urows:
+                                    if DATABASE_URL:
+                                        uid = ur[ucols.index('id')]
+                                        gval = None
+                                        if 'group' in ucols:
+                                            gval = ur[ucols.index('group')]
+                                        elif 'group_id' in ucols:
+                                            gval = ur[ucols.index('group_id')]
+                                    else:
+                                        uid = ur['id']
+                                        gval = ur.get('group') or ur.get('group_id')
+                                    if not gval:
+                                        continue
+                                    try:
+                                        if isinstance(gval, str) and (gval.strip().startswith('[') or gval.strip().startswith('{')):
+                                            parsed = json.loads(gval)
+                                            if isinstance(parsed, list):
+                                                for gid in parsed:
+                                                    user_groups_map.setdefault(uid, []).append(gid)
+                                            elif isinstance(parsed, dict):
+                                                ids = parsed.get('group_ids') or parsed.get('user_ids')
+                                                if isinstance(ids, list):
+                                                    for gid in ids:
+                                                        user_groups_map.setdefault(uid, []).append(gid)
+                                        else:
+                                            user_groups_map.setdefault(uid, []).append(str(gval))
+                                    except Exception:
+                                        user_groups_map.setdefault(uid, []).append(str(gval))
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"Error building user-groups map: {e}")
+
             # First, ensure all groups exist in our database
             synced_groups = 0
             for group in groups:
@@ -940,30 +1059,41 @@ class CreditDatabase:
             
             if synced_groups > 0:
                 print(f"✅ Synced {synced_groups} groups from OpenWebUI")
-            
+
             # Update memberships for all users
             synced_count = 0
             with self.get_connection() as conn_credit:
                 cursor_credit = conn_credit.cursor()
-                
+
                 # Clear all existing memberships
                 self.execute_query("DELETE FROM credit_user_groups")
-                
+
                 # Add new memberships
-                for user_id, group_ids in user_groups_map.items():
-                    for group_id in group_ids:
+                for uid, group_ids in user_groups_map.items():
+                    # Ensure the user exists in our credit system before assigning groups
+                    user_exists = self.fetch_one("SELECT id FROM credit_users WHERE id = %s", (uid,))
+                    if not user_exists:
+                        # Create the user with a sensible default balance (match other sync behavior)
+                        self.update_user_credits(
+                            user_id=uid,
+                            new_balance=1000.0,
+                            actor='sync',
+                            transaction_type='sync',
+                            reason='Created user during group membership sync from OpenWebUI'
+                        )
+
+                    for gid in group_ids:
                         self.execute_query("""
                             INSERT INTO credit_user_groups (user_id, group_id)
                             VALUES (%s, %s)
-                        """, (user_id, group_id))
+                        """, (uid, gid))
                     synced_count += 1
-                
+
                 conn_credit.commit()
-            
+
             # Commented out to reduce log clutter - routine sync operation
             # self.log_action("user_groups_sync", "system", f"Synced group memberships for {synced_count} users")
             return synced_count
-            
         except Exception as e:
             print(f"Error syncing all user groups: {e}")
             self.log_action("user_groups_sync_error", "system", f"Failed to sync user groups: {str(e)}")
