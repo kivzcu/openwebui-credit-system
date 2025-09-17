@@ -78,16 +78,45 @@ bash run_credit_admin.sh
 
 ### 5. Configure OpenWebUI Extensions
 
-Set these environment variables in your OpenWebUI function setup :
+Set these environment variables in your OpenWebUI function/extension setup so the extensions can securely talk to the Credit Admin API.
 
 ```bash
-CREDITS_API_PROTOCOL=http  # or https if SSL enabled
+# Use `http` or `https` depending on your Credit Admin setup
+CREDITS_API_PROTOCOL=http
+# Host and port where the Credit Admin API is reachable from OpenWebUI
 CREDITS_API_HOST=localhost:8000
+# For self-signed certs set to `false`; set to `true` for valid CA-signed certs
 CREDITS_API_SSL_VERIFY=false
+# Exact API key from `credit_admin/.env` (view with ./show-security-config.sh)
 CREDITS_API_KEY=your_generated_key_from_step_2
 ```
 
-**🔑 Important**: Use the **exact same API key** from the .env (view with ./show-security-config.sh). Extensions now require these env vars to be set in OpenWebUI; no hardcodes.
+Images: the screenshots below show the OpenWebUI "Valves" (function configuration) UI with the same fields you must populate. Use these as a visual reference when adding the environment variables to your OpenWebUI function settings.
+
+- Function configuration screenshot: `img/funct_config.png`
+- Valves configuration screenshot: `img/valves.png`
+
+<img src="img/funct_config.png" alt="Function configuration reference" style="max-width:640px; width:100%; height:auto; display:block; margin:10px 0;" />
+
+<img src="img/valves.png" alt="Valves configuration reference" style="max-width:640px; width:100%; height:auto; display:block; margin:10px 0;" />
+
+Important notes:
+- **API key must match**: The `CREDITS_API_KEY` you set in OpenWebUI must be identical to `CREDITS_API_KEY` in `credit_admin/.env` (run `./show-security-config.sh` to view it).
+- **SSL**: If `ENABLE_SSL=true` in `credit_admin/.env` and you have valid CA-signed certificates, use `CREDITS_API_PROTOCOL=https` and set `CREDITS_API_SSL_VERIFY=true`. For local/self-signed certs use `https` + `CREDITS_API_SSL_VERIFY=false`.
+- **Host reachability**: From the OpenWebUI host/process, `CREDITS_API_HOST` must be reachable (include port if non-standard). When running both services locally use `localhost:8000` (or the port configured).
+- **No hardcodes**: Do not edit extension source files to add keys — always use environment variables.
+
+Quick verify (from OpenWebUI host):
+
+```bash
+curl -I --header "X-API-Key: $CREDITS_API_KEY" "$CREDITS_API_PROTOCOL://$CREDITS_API_HOST/health"
+```
+
+Troubleshooting:
+- If you see 401/403 responses, re-check the API key matches exactly and has no surrounding quotes or stray characters.
+- If you get SSL errors, temporarily set `CREDITS_API_SSL_VERIFY=false` for local testing, or fix your certificate chain for production.
+- If the function cannot reach the host, check firewall rules and that the Credit Admin server is listening on the expected interface/port.
+
 
 ## 📋 Access Points
 
@@ -157,7 +186,6 @@ Place extension files in your OpenWebUI extensions directory:
 
 - [HTTPS Setup Guide](HTTPS_SETUP.md) - Complete SSL/TLS configuration
 - [Security Documentation](SECURITY.md) - Authentication and security features
-- [Refactoring Summary](REFACTORING_SUMMARY.md) - System architecture and changes
 
 ## 🛠️ Development
 
@@ -181,7 +209,7 @@ openwebui-credit-system/
 │   ├── data/                 # SQLite database
 │   └── pyproject.toml       # Python dependencies (PEP 621)
 ├── extensions/               # OpenWebUI extensions
-└── functions/               # OpenWebUI functions (legacy)
+└── functions/               # OpenWebUI functions (export)
 ```
 
 ### API Endpoints
