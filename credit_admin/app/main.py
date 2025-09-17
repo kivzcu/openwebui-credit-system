@@ -12,7 +12,7 @@ import asyncio
 import ssl
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, HTTPException, Depends, Query
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -22,7 +22,7 @@ from watchdog.events import FileSystemEventHandler
 from app.api import credits_v2, auth
 from app.database import db
 from app.config import BASE_DIR, DB_FILE, DATABASE_URL, CREDIT_DATABASE_URL
-from app.auth import print_security_config
+from app.auth import print_security_config, get_current_admin_user
 import uvicorn
 
 def is_postgresql_database():
@@ -468,13 +468,14 @@ async def get_reset_status():
         return {"error": str(e)}
 
 @app.post("/api/reset/manual", tags=["reset"])
-async def manual_reset():
+async def manual_reset(force: bool = Query(False, description="Force reset even if already performed this month"), current_user: get_current_admin_user = Depends(get_current_admin_user)):
     """Manually trigger a monthly reset"""
     try:
         reset_logger.info("🔧 Manual reset triggered via API")
-        
-        result = db.perform_monthly_reset()
-        
+
+        # pass force through to the DB implementation
+        result = db.perform_monthly_reset(force=force)
+
         if result['success']:
             reset_logger.info(f"✅ Manual reset completed successfully!")
             db.log_action(
@@ -483,7 +484,7 @@ async def manual_reset():
                 message=f"Manual reset completed - {result['users_affected']} users affected",
                 metadata=result
             )
-        
+
         return result
     except Exception as e:
         error_msg = f"Error during manual reset: {str(e)}"

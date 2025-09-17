@@ -255,6 +255,11 @@ function setupGlobalEventDelegation() {
       syncUsersFromOpenWebUI(e);
       return;
     }
+    // Force reset button
+    if (e.target.classList.contains('force-reset-btn') || e.target.closest('.force-reset-btn')) {
+      showForceResetConfirm();
+      return;
+    }
     if (e.target.classList.contains('sync-models-btn')) {
       syncModelsFromOpenWebUI(e);
       return;
@@ -285,6 +290,66 @@ function setupGlobalEventDelegation() {
       return;
     }
   });
+}
+
+function showForceResetConfirm() {
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 bg-black/30 flex items-center justify-center z-50';
+  modal.innerHTML = `
+    <div class="bg-white dark:bg-gray-800 p-6 rounded-lg w-full max-w-lg shadow-xl">
+      <h3 class="text-lg font-bold mb-2">Force Monthly Reset</h3>
+      <p class="mb-4 text-sm text-gray-700 dark:text-gray-300">This will force the monthly credit reset even if one has already been recorded this month. This action will update all user balances to their group default credits and cannot be easily undone.</p>
+      <p class="mb-4 text-sm font-semibold text-red-600 dark:text-red-400">Warning: This action is destructive. Type <code>YES</code> below to confirm.</p>
+      <div class="mb-3">
+        <label class="block text-sm mb-1">Type <code>YES</code> to confirm</label>
+        <input id="forceResetConfirmInput" type="text" class="w-full px-2 py-1 border rounded-md bg-transparent dark:border-gray-700" placeholder="Type YES to confirm" />
+      </div>
+      <div class="flex justify-end gap-2">
+        <button type="button" class="cancel-force-btn px-3 py-1 bg-gray-200 dark:bg-gray-700 rounded-md">Cancel</button>
+        <button type="button" class="confirm-force-btn px-3 py-1 bg-red-600 text-white rounded-md" disabled>Force Reset</button>
+      </div>
+    </div>`;
+
+  const modalRoot = document.getElementById('modalRoot') || document.body;
+  modalRoot.appendChild(modal);
+
+  const cancelBtn = modal.querySelector('.cancel-force-btn');
+  const confirmBtn = modal.querySelector('.confirm-force-btn');
+  const input = modal.querySelector('#forceResetConfirmInput');
+
+  const onInput = () => {
+    const val = input.value ? input.value.trim() : '';
+    confirmBtn.disabled = val !== 'YES';
+  };
+
+  input.addEventListener('input', onInput);
+  cancelBtn.addEventListener('click', () => modal.remove());
+  confirmBtn.addEventListener('click', async () => {
+    try {
+      await performForceReset();
+    } finally {
+      modal.remove();
+    }
+  });
+}
+
+async function performForceReset() {
+  try {
+    const res = await authenticatedFetch('/api/reset/manual?force=true', {
+      method: 'POST'
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      notifications.success(`Forced reset completed: ${data.message}`);
+      renderUsersView();
+    } else {
+      notifications.error(data.message || 'Force reset failed');
+    }
+  } catch (err) {
+    if (err instanceof AuthenticationError) return; // authenticatedFetch already handles logout
+    notifications.error(`Error performing forced reset: ${err.message}`);
+  }
 }
 
 function showLoginForm() {
@@ -829,6 +894,12 @@ async function renderUsersView() {
         <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
       </svg>
       Sync All Data from OpenWebUI
+    </button>
+    <button type="button" class="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 force-reset-btn" title="Force monthly reset (requires ADMIN API key)">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5">
+        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM10 12a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
+      </svg>
+      Force Monthly Reset
     </button>
   </div>`;
 

@@ -1563,15 +1563,17 @@ class CreditDatabase:
         except Exception:
             return True  # On any parse error, assume we need a reset
 
-    def perform_monthly_reset(self) -> Dict[str, Any]:
-        """Perform monthly credit reset for all users"""
+    def perform_monthly_reset(self, force: bool = False) -> Dict[str, Any]:
+        """Perform monthly credit reset for all users
+        If force==True, bypass the "already performed this month" check and perform reset anyway.
+        """
         from datetime import datetime, timezone
         
         current_date = datetime.now(timezone.utc)
         reset_date = current_date.strftime('%Y-%m-%d')
         
-        # Check if reset is needed
-        if not self.needs_monthly_reset():
+        # Check if reset is needed (unless forced)
+        if not force and not self.needs_monthly_reset():
             return {
                 'success': False,
                 'message': 'Monthly reset not needed - already performed this month',
