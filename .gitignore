@@ -33,3 +33,8 @@ credit_admin/data/*.jsonl
 credit_admin/ssl/*.pem
 
 REFACTORING_SUMMARY.md
+credit_admin/uv.lock
+
+# Ignore Python egg and dist info
+dist/
+*egg-info*

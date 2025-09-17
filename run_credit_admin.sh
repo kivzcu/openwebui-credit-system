@@ -4,4 +4,7 @@ export PYTHONPATH="/root/sources/openwebui-credit-system/credit_admin:$PYTHONPAT
 
 export $(grep -v '^#' .env | xargs -d '\n')
 
-credit_admin/venv/bin/python3 credit_admin/app/main.py
+cd credit_admin
+
+# Run using uvx (resolve deps from `credit_admin/pyproject.toml`)
+uv run python app/main.py

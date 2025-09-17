@@ -35,11 +35,16 @@ git clone <repository-url>
 cd openwebui-credit-system/credit_admin
 
 # Create virtual environment
-python3 -m venv venv
+uv venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
+# Using `pyproject.toml` (recommended)
+# Use `uv` to lock, sync and run the project environment.
+# Example workflow (from repository root):
+uv sync --active
+uv run python app/main.py
+
 ```
 
 ### 2. Security Configuration
@@ -68,25 +73,12 @@ nano .env
 ### 4. Run the Application
 
 ```bash
-# HTTP mode (default port 8000)
-python app/main.py
-
-# Custom port
-PORT=3000 python app/main.py
-
-# HTTPS mode  
-ENABLE_SSL=true python app/main.py
-
-# HTTPS mode with custom port
-ENABLE_SSL=true PORT=3000 python app/main.py
-
-# Docker with HTTPS
-docker-compose -f docker-compose-https.yml up -d
+bash run_credit_admin.sh
 ```
 
 ### 5. Configure OpenWebUI Extensions
 
-Set these environment variables in your OpenWebUI setup (copy from credit_admin/show-security-config.sh output):
+Set these environment variables in your OpenWebUI function setup :
 
 ```bash
 CREDITS_API_PROTOCOL=http  # or https if SSL enabled
@@ -187,7 +179,7 @@ openwebui-credit-system/
 │   │   └── static/           # Web interface
 │   ├── ssl/                  # SSL certificates
 │   ├── data/                 # SQLite database
-│   └── requirements.txt      # Python dependencies
+│   └── pyproject.toml       # Python dependencies (PEP 621)
 ├── extensions/               # OpenWebUI extensions
 └── functions/               # OpenWebUI functions (legacy)
 ```

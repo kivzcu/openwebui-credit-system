@@ -8,14 +8,3 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_FILE = os.getenv("OPENWEBUI_DATABASE_PATH", "")
 DATABASE_URL = os.getenv("DATABASE_URL")
 CREDIT_DATABASE_URL = os.getenv("CREDIT_DATABASE_URL")
-
-# Script paths
-SCRIPT_DIR = os.path.join(BASE_DIR, "app", "data")
-SYNC_SCRIPT = os.path.join(SCRIPT_DIR, "sync_credits.py")
-
-# Data files
-CREDITS_FILE = os.path.join(DATA_DIR, "credits.json")
-MODELS_FILE = os.path.join(DATA_DIR, "credits_models.json")
-TRANSACTION_LOG_FILE = os.path.join(DATA_DIR, "transactions.json")
-GROUPS_FILE = os.path.join(DATA_DIR, "credits_groups.json")
-LOG_FILE = os.path.join(DATA_DIR, "credits_log.jsonl")

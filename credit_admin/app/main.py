@@ -57,13 +57,14 @@ ENABLE_SSL = False
 def get_uvicorn_config():
     parser = argparse.ArgumentParser(description="Run the Credit Management System")
     parser.add_argument('--host', default=os.getenv('HOST', '0.0.0.0'), help='Host to bind (default: 0.0.0.0)')
-    parser.add_argument('--port', type=int, default=int(os.getenv('PORT', '8001')), help='Port to bind (default: 8001)')
+    parser.add_argument('--port', type=int, default=int(os.getenv('PORT', '8000')), help='Port to bind (default: 8000)')
     parser.add_argument('--reload', action='store_true', default=os.getenv('RELOAD', 'true').lower() == 'true', help='Enable auto-reload (default: true in dev)')
     parser.add_argument('--ssl-certfile', help='Path to SSL certificate file')
     parser.add_argument('--ssl-keyfile', help='Path to SSL key file')
     args = parser.parse_args()
 
     # Load SSL paths from env if not provided via args
+    global ENABLE_SSL
     ENABLE_SSL = os.getenv("ENABLE_SSL", "false").lower() == "true"
     if ENABLE_SSL and not args.ssl_certfile:
         args.ssl_certfile = os.getenv("SSL_CERT_PATH", os.path.join(BASE_DIR, "ssl", "cert.pem"))

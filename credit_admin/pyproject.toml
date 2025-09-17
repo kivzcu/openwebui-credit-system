@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openwebui-credit-admin"
+version = "0.1.0"
+description = "Credit admin for OpenWebUI"
+authors = [ { name = "OpenWebUI Credit System" } ]
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "watchdog",
+  "pydantic",
+  "httpx",
+  "python-jose[cryptography]",
+  "bcrypt>=4.0.0,<5.0.0",
+  "python-multipart",
+  "psycopg2-binary",
+  "SQLAlchemy",
+]
+
+
+
+[readme]
+file = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+exclude = ["data", "ssl"]
