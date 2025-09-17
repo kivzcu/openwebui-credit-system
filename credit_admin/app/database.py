@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
-from app.config import CREDITS_FILE, MODELS_FILE, GROUPS_FILE, DB_FILE, CREDIT_DATABASE_URL, DATABASE_URL
+from app.config import DB_FILE, CREDIT_DATABASE_URL, DATABASE_URL
 
 # PostgreSQL support
 try:
@@ -441,98 +441,6 @@ class CreditDatabase:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_date ON credit_usage_statistics(year, month)")
             
             conn.commit()
-    
-    def migrate_from_json(self):
-        """Migrate existing JSON data to SQLite"""
-        print("🔄 Migrating data from JSON files to SQLite...")
-        
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Migrate groups
-            if os.path.exists(GROUPS_FILE):
-                with open(GROUPS_FILE, 'r') as f:
-                    groups_data = json.load(f)
-                
-                for group_id, group_info in groups_data.items():
-                    # Mark migrated groups as non-system groups (they're from previous data)
-                    is_system = group_id == 'default'  # Only 'default' should be marked as system
-                    self.execute_query("""
-                        INSERT INTO credit_groups (id, name, default_credits, is_system_group)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (id) DO UPDATE SET
-                            name = EXCLUDED.name,
-                            default_credits = EXCLUDED.default_credits,
-                            is_system_group = EXCLUDED.is_system_group
-                    """, (group_id, group_info.get('name', ''), group_info.get('default_credits', 0.0), is_system))
-                print(f"✅ Migrated {len(groups_data)} groups")
-            
-            # Migrate models
-            if os.path.exists(MODELS_FILE):
-                with open(MODELS_FILE, 'r') as f:
-                    models_data = json.load(f)
-                
-                for model_id, model_info in models_data.items():
-                    self.execute_query("""
-                        INSERT INTO credit_models (id, name, context_price, generation_price)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (id) DO UPDATE SET
-                            name = EXCLUDED.name,
-                            context_price = EXCLUDED.context_price,
-                            generation_price = EXCLUDED.generation_price
-                    """, (
-                        model_id, 
-                        model_info.get('name', model_id),
-                        model_info.get('cost_per_token', 0.001),
-                        model_info.get('cost_per_second', 0.004)
-                    ))
-                print(f"✅ Migrated {len(models_data)} models")
-            
-            # Migrate users and their credit history
-            if os.path.exists(CREDITS_FILE):
-                with open(CREDITS_FILE, 'r') as f:
-                    credits_data = json.load(f)
-                
-                users = credits_data.get('users', {})
-                for user_id, user_info in users.items():
-                    # Insert user
-                    self.execute_query("""
-                        INSERT INTO credit_users (id, balance)
-                        VALUES (%s, %s)
-                        ON CONFLICT (id) DO UPDATE SET balance = EXCLUDED.balance
-                    """, (user_id, user_info.get('balance', 0.0)))
-                    
-                    # Insert user-group relationship if group exists
-                    group_id = user_info.get('group')
-                    if group_id:
-                        self.execute_query("""
-                            INSERT INTO credit_user_groups (user_id, group_id)
-                            VALUES (%s, %s)
-                            ON CONFLICT (user_id, group_id) DO NOTHING
-                        """, (user_id, group_id))
-                    
-                    # Migrate transaction history
-                    history = user_info.get('history', [])
-                    for transaction in history:
-                        cursor.execute("""
-                            INSERT INTO credit_transactions 
-                            (user_id, amount, transaction_type, reason, actor, balance_after, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            user_id,
-                            transaction.get('amount', 0.0),
-                            transaction.get('action', 'unknown'),
-                            transaction.get('reason', ''),
-                            'migration',
-                            user_info.get('balance', 0.0),  # We don't have historical balance
-                            transaction.get('timestamp', datetime.now(timezone.utc).isoformat())
-                        ))
-                
-                print(f"✅ Migrated {len(users)} users and their transaction history")
-            
-            conn.commit()
-        
-        print("🎉 Migration completed successfully!")
     
     # User operations
     def get_user_credits(self, user_id: str) -> Optional[Dict[str, Any]]:
