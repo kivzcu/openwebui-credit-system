@@ -1,6 +1,6 @@
 """
 title: Credit management Models
-author: DDVVY
+author: Miloslav Konopík, DDVVY
 version: 1.0
 """
 

@@ -1,6 +1,6 @@
 """
 title: Credit management  enough credits
-author: DDVVY
+author: Miloslav Konopík, DDVVY
 version: 1.0
 """
 

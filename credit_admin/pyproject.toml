@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "openwebui-credit-admin"
 version = "0.1.0"
 description = "Credit admin for OpenWebUI"
-authors = [ { name = "OpenWebUI Credit System" } ]
+authors = [ { name = "Miloslav Konopík" } ]
 license = "MIT"
 requires-python = ">=3.11"
 dependencies = [

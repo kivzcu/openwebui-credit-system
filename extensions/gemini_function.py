@@ -1,6 +1,6 @@
 """
 title: Google Gemini Pipeline
-author: owndev, olivier-lacroix
+author: owndev, olivier-lacroix, Miloslav Konopík
 author_url: https://github.com/owndev/
 project_url: https://github.com/owndev/Open-WebUI-Functions
 funding_url: https://github.com/sponsors/owndev

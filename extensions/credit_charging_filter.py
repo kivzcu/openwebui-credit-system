@@ -1,6 +1,6 @@
 """
 title: Credit management Charging credits
-author: DDVVY
+author: Miloslav Konopík, DDVVY
 version: 1.0
 """
 
