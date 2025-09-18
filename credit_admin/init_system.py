@@ -21,12 +21,10 @@ def main():
         db.init_database()
         print("✅ Database schema created")
         
-        # Check if migration is needed
+        # Migration from JSON has been removed; do not attempt automatic migration
         existing_users = db.get_all_users_with_credits()
         if not existing_users:
-            print("🔄 No existing users found, performing migration from JSON files...")
-            db.migrate_from_json()
-            print("✅ Migration completed successfully")
+            print("⚠️  No existing users found in database.")
         else:
             print(f"✅ Found {len(existing_users)} existing users in database")
         

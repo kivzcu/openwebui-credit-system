@@ -333,11 +333,10 @@ async def lifespan(app: FastAPI):
     print_security_config()
     
     try:
-        # Check if migration is needed
+        # Migration from JSON has been removed; skip automatic migration
         users = db.get_all_users_with_credits()
         if not users:
-            print("🔄 Migrating from JSON files...")
-            db.migrate_from_json()
+            print("⚠️  No users found in database.")
         
         # Sync users and models from OpenWebUI
         await credits_v2.sync_all_from_openwebui()

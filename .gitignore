@@ -38,3 +38,4 @@ credit_admin/uv.lock
 # Ignore Python egg and dist info
 dist/
 *egg-info*
+credit_admin/.env_backup
