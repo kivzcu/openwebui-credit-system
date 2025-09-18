@@ -354,10 +354,6 @@ Below are short, user-focused descriptions of the main UI pages shown in the scr
 
 	<img src="img/year_stats.png" alt="Yearly Statistics" style="max-width:960px; width:100%; height:auto; display:block; margin:10px 0;" />
 
-If you want, I can also add anchor links from each manual bullet to the corresponding API endpoint examples or extend the manual with step-by-step recipes (for example: "How to add a new model and price it").
-
-
-
 ## 📄 License
 
 This project is licensed under the MIT License - see the [licence.txt](licence.txt) file for details.
