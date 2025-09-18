@@ -76,7 +76,9 @@ nano .env
 bash run_credit_admin.sh
 ```
 
-### 5. Configure OpenWebUI Extensions
+### 5. Install and Configure OpenWebUI Extensions
+
+Import the functions from the `functions/` folder into the OpenWebUI functions.
 
 Set these environment variables in your OpenWebUI function/extension setup so the extensions can securely talk to the Credit Admin API.
 
@@ -265,10 +267,6 @@ The system automatically tracks which models are available in OpenWebUI:
 - `transactions` - Credit transaction history
 - `system_logs` - System event logging
 
-## 🔄 Migration from v1.0
-
-The system automatically migrates from JSON files to SQLite on first run. See [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) for details.
-
 ## 🚨 Troubleshooting
 
 ### Common Issues
@@ -278,40 +276,86 @@ The system automatically migrates from JSON files to SQLite on first run. See [R
 3. **SSL errors**: Use `CREDITS_API_SSL_VERIFY=false` for self-signed certificates
 4. **Database sync issues**: Check OpenWebUI database path and permissions
 
-### Debugging
 
-```bash
-# Check security configuration
-./show-security-config.sh
+## 📖 User Manual
 
-# Test API connectivity
-curl -H "X-API-Key: your_api_key" https://localhost:8000/health
+This section provides guidance on how to use the OpenWebUI Credit System effectively. Refer to the images below for visual assistance.
 
-# View logs
-docker-compose logs -f  # For Docker deployment
-python app/main.py      # For direct run
-```
+### User Manual (UI walkthrough)
+
+Below are short, user-focused descriptions of the main UI pages shown in the screenshots. Each section includes an inline image for quick reference.
+
+- **Admin Login**
+	- Purpose: Secure entry for administrators.
+	- Action: Enter your username and password, then click `Sign in`.
+	- Tip: Change the default admin credentials after first login.
+  
+	<img src="img/login.png" alt="Admin Login" style="max-width:640px; width:60%; height:auto; display:block; margin:10px 0;" />
+
+- **User Credit Management**
+	- Purpose: See all users, their group memberships, current credit balances, and default credits.
+	- Action: Use the `Edit` button to change a user's credits or group membership. Use `Export Users to Excel` to download a CSV/Excel snapshot.
+	- Tip: Use `Sync All Data from OpenWebUI` after making changes in OpenWebUI to keep users and groups in sync.
+
+	<img src="img/users.png" alt="User List" style="max-width:960px; width:100%; height:auto; display:block; margin:10px 0;" />
+
+- **Group Management**
+	- Purpose: Define groups and their default credit amounts.
+	- Action: Click `Edit` to change the default credits for a group. Use `Export Groups to Excel` to back up group definitions.
+	- Tip: Changing a group's default does not automatically adjust every user's balance — update users individually if needed.
+
+	<img src="img/groups.png" alt="Group Management" style="max-width:960px; width:100%; height:auto; display:block; margin:10px 0;" />
+
+
+- **Model Pricing Management**
+	- Purpose: Configure per-model pricing used when converting token usage into credits.
+	- Action: Click `Edit` for a model to change context/generation prices. Click `Sync Models from OpenWebUI` to import new models.
+	- Tip: Model pricing is available in the public pricing page /pricing.
+
+	<img src="img/models.png" alt="Model Pricing" style="max-width:960px; width:100%; height:auto; display:block; margin:10px 0;" />
+
+- **Public Pricing Page**
+	- Purpose: Public-facing page that shows current model pricing and availability (no login required).
+	- What users see: Searchable grid of models with context and generation credits (per token unit), status badges, and quick filters (Name A–Z, Credits Low/High).
+	- How to use: Share the `/pricing` URL with users so they can view model costs without administrative access.
+	- API access: A JSON endpoint mirrors the public page for programmatic use: `GET /api/public/models/pricing`.
+
+		<img src="img/public_pricing.png" alt="Public Model Pricing" style="max-width:960px; width:100%; height:auto; display:block; margin:10px 0;" />
+
+
+
+
+- **Dashboard / System Logs**
+	- Purpose: View recent system events such as manual syncs, resets, and background job errors.
+	- Action: Use `Refresh` to reload entries; use pagination to view older logs.
+	- Tip: Look for `manual_sync`, `reset_event`, and `startup_reset` entries to confirm syncs and resets.
+
+	<img src="img/logs.png" alt="System Logs" style="max-width:960px; width:100%; height:auto; display:block; margin:10px 0;" />
+
+
+- **Transaction Logs**
+	- Purpose: Audit trail of per-user credit transactions including deductions and resets.
+	- Action: Inspect `Reason` and `Model` columns for details about deductions; use timestamps to correlate events.
+	- Tip: Red entries indicate deductions; green entries indicate credits added (e.g., monthly resets).
+
+	<img src="img/trans_logs.png" alt="Transaction Logs" style="max-width:960px; width:100%; height:auto; display:block; margin:10px 0;" />
+
+- **Usage Statistics and Yearly Stats**
+	- Purpose: Summary and historical views for credits used, remaining credits, number of transactions, active users, and models used.
+	- Action: Choose period (Current Month / Year), then click `Refresh` to update the data.
+	- Tip: Use these reports for billing or trend analysis.
+
+	<img src="img/usage_stats.png" alt="Usage Statistics" style="max-width:960px; width:100%; height:auto; display:block; margin:10px 0;" />
+
+	<img src="img/year_stats.png" alt="Yearly Statistics" style="max-width:960px; width:100%; height:auto; display:block; margin:10px 0;" />
+
+If you want, I can also add anchor links from each manual bullet to the corresponding API endpoint examples or extend the manual with step-by-step recipes (for example: "How to add a new model and price it").
+
+
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the [licence.txt](licence.txt) file for details.
 
-## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📞 Support
-
-For issues and questions:
-- Check the documentation in this repository
-- Review the troubleshooting section
-- Check existing issues in the issue tracker
-
----
-
-**⚠️ Security Notice**: Always change default credentials before production use!
 
