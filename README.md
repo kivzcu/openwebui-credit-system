@@ -50,14 +50,19 @@ uv run python app/main.py
 ### 2. Security Configuration
 
 ```bash
-# Generate secure .env file with keys and configuration
+# You can generate a secure `.env` automatically:
 ./generate-env.sh
+
+# Or start from the example file shipped with the project:
+# Copy `credit_admin/.env.example` to `credit_admin/.env` and edit values.
+cp credit_admin/.env.example credit_admin/.env
+nano credit_admin/.env
 
 # View the configuration (masked for security)
 ./show-security-config.sh
 
-# Edit .env to change ADMIN_PASSWORD if desired
-nano .env
+# Edit `.env` to change `ADMIN_PASSWORD` or other values if desired
+# (ensure you replace placeholder values like CHANGEME_* with real secrets)
 ```
 
 ### 3. HTTPS Setup (Optional)
