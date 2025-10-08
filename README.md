@@ -65,21 +65,47 @@ nano credit_admin/.env
 # (ensure you replace placeholder values like CHANGEME_* with real secrets)
 ```
 
-### 3. HTTPS Setup (Optional)
+### 3. HTTPS Setup with Nginx (Recommended for Production)
+
+For production deployment, use nginx as a reverse proxy to handle SSL/TLS termination. This is more secure and allows both OpenWebUI and Credit Admin to run on the same domain.
 
 ```bash
-# For development (self-signed)
-./setup-ssl.sh
-
-# For production (Let's Encrypt)
+# Step 1: Obtain Let's Encrypt certificate
+cd credit_admin
 ./setup-ssl-production.sh yourdomain.com your-email@example.com
+
+# Step 2: Nginx will be automatically configured to:
+# - Handle HTTPS on port 443
+# - Proxy / to OpenWebUI (port 8080)
+# - Proxy /credits/* to Credit Admin (port 8081)
 ```
 
-### 4. Run the Application
+**Architecture:**
+```
+Browser (HTTPS)
+    ↓
+Nginx (port 443, TLS termination)
+    ├→ /credits/* → http://localhost:8081/ (Credit Admin)
+    └→ /*        → http://localhost:8080  (OpenWebUI)
+```
+
+**Alternative: Development Setup (Self-signed)**
+```bash
+# For local development only
+./setup-ssl.sh
+```
+
+### 4. Run the Applications
 
 ```bash
+# Start Credit Admin (runs on port 8081, plain HTTP)
 bash run_credit_admin.sh
+
+# Start OpenWebUI (runs on port 8080, plain HTTP)
+bash run_openwebui.sh
 ```
+
+**Note:** Both apps run plain HTTP behind nginx. Nginx handles all TLS encryption, keeping private keys secure (root-only access).
 
 ### 5. Install and Configure OpenWebUI Extensions
 
@@ -87,12 +113,25 @@ Import the functions from the `functions/` folder into the OpenWebUI functions.
 
 Set these environment variables in your OpenWebUI function/extension setup so the extensions can securely talk to the Credit Admin API.
 
+**Production Setup (with Nginx):**
 ```bash
-# Use `http` or `https` depending on your Credit Admin setup
+# Use https when nginx handles TLS termination
+CREDITS_API_PROTOCOL=https
+# Use domain name without path (nginx routes /credits internally)
+CREDITS_API_HOST=yourdomain.com
+# True for valid Let's Encrypt certificates
+CREDITS_API_SSL_VERIFY=true
+# Exact API key from `credit_admin/.env` (view with ./show-security-config.sh)
+CREDITS_API_KEY=your_generated_key_from_step_2
+```
+
+**Development Setup (Direct Access):**
+```bash
+# Use http for direct access during development
 CREDITS_API_PROTOCOL=http
-# Host and port where the Credit Admin API is reachable from OpenWebUI
-CREDITS_API_HOST=localhost:8000
-# For self-signed certs set to `false`; set to `true` for valid CA-signed certs
+# Include port for direct access
+CREDITS_API_HOST=localhost:8081
+# False for self-signed or no SSL
 CREDITS_API_SSL_VERIFY=false
 # Exact API key from `credit_admin/.env` (view with ./show-security-config.sh)
 CREDITS_API_KEY=your_generated_key_from_step_2
@@ -109,14 +148,21 @@ Images: the screenshots below show the OpenWebUI "Valves" (function configuratio
 
 Important notes:
 - **API key must match**: The `CREDITS_API_KEY` you set in OpenWebUI must be identical to `CREDITS_API_KEY` in `credit_admin/.env` (run `./show-security-config.sh` to view it).
-- **SSL**: If `ENABLE_SSL=true` in `credit_admin/.env` and you have valid CA-signed certificates, use `CREDITS_API_PROTOCOL=https` and set `CREDITS_API_SSL_VERIFY=true`. For local/self-signed certs use `https` + `CREDITS_API_SSL_VERIFY=false`.
-- **Host reachability**: From the OpenWebUI host/process, `CREDITS_API_HOST` must be reachable (include port if non-standard). When running both services locally use `localhost:8000` (or the port configured).
+- **SSL with Nginx**: When using nginx as reverse proxy, use `CREDITS_API_PROTOCOL=https` and `CREDITS_API_SSL_VERIFY=true` with Let's Encrypt certificates. The nginx setup handles TLS termination automatically.
+- **Direct access**: For development or direct access, use `http://localhost:8081` and `CREDITS_API_SSL_VERIFY=false`.
+- **Host reachability**: Use domain name for production (nginx routing) or `localhost:8081` for direct access. No need to include `/credits` in the host - nginx handles path routing.
 - **No hardcodes**: Do not edit extension source files to add keys — always use environment variables.
 
-Quick verify (from OpenWebUI host):
+Quick verify (Production with Nginx):
 
 ```bash
-curl -I --header "X-API-Key: $CREDITS_API_KEY" "$CREDITS_API_PROTOCOL://$CREDITS_API_HOST/health"
+curl -I --header "X-API-Key: $CREDITS_API_KEY" "https://yourdomain.com/credits/health"
+```
+
+Quick verify (Development):
+
+```bash
+curl -I --header "X-API-Key: $CREDITS_API_KEY" "http://localhost:8081/health"
 ```
 
 Troubleshooting:
@@ -127,14 +173,25 @@ Troubleshooting:
 
 ## 📋 Access Points
 
-- **Admin Interface**: https://localhost:8000 (or your configured PORT)
-- **Public Pricing Page**: https://localhost:8000/pricing (no login required)
-- **API Documentation**: https://localhost:8000/docs
-- **Health Check**: https://localhost:8000/health
+### Production (with Nginx)
+- **OpenWebUI**: https://yourdomain.com
+- **Credit Admin Interface**: https://yourdomain.com/credits/
+- **Public Pricing Page**: https://yourdomain.com/credits/pricing (no login required)
+- **API Documentation**: https://yourdomain.com/credits/docs
+- **Health Check**: https://yourdomain.com/credits/health
+
+### Development (Direct Access)
+- **Admin Interface**: http://localhost:8081 (or your configured PORT)
+- **Public Pricing Page**: http://localhost:8081/pricing (no login required)
+- **API Documentation**: http://localhost:8081/docs
+- **Health Check**: http://localhost:8081/health
 
 **Default Login**: `admin` / `admin123` (⚠️ Change immediately!)
 
-**Port Configuration**: The default port is 8000, but you can change it using the `PORT` environment variable.
+**Port Configuration**: 
+- Credit Admin default port: 8081 (configurable via `PORT` in `.env`)
+- OpenWebUI default port: 8080
+- Nginx listens on ports 80 (HTTP) and 443 (HTTPS)
 
 ### 🏷️ Public Pricing Features
 
@@ -159,8 +216,8 @@ Example .env content:
 # ⚠️ CHANGE DEFAULT PASSWORD AND KEYS BEFORE PRODUCTION!
 
 # Application
-PORT=8000
-ENABLE_SSL=false
+PORT=8081  # Default port (8000 if standalone, 8081 with nginx)
+ENABLE_SSL=false  # Set to false when using nginx as TLS terminator
 
 # Security
 ADMIN_USERNAME=admin
@@ -172,9 +229,20 @@ ACCESS_TOKEN_EXPIRE_MINUTES=30
 # Database
 OPENWEBUI_DATABASE_PATH=/root/.open-webui/webui.db
 
+# Path Configuration
+# ROOT_PATH=/credits  # NOT needed - nginx handles path routing
+# JavaScript auto-detects BASE_PATH from browser URL
+
 # Extensions (for OpenWebUI setup - copy these)
+# Production (with nginx):
+# CREDITS_API_PROTOCOL=https
+# CREDITS_API_HOST=yourdomain.com
+# CREDITS_API_SSL_VERIFY=true
+# CREDITS_API_KEY=your_generated_api_key
+#
+# Development (direct):
 # CREDITS_API_PROTOCOL=http
-# CREDITS_API_HOST=localhost:8000
+# CREDITS_API_HOST=localhost:8081
 # CREDITS_API_SSL_VERIFY=false
 # CREDITS_API_KEY=your_generated_api_key
 ```
@@ -277,9 +345,21 @@ The system automatically tracks which models are available in OpenWebUI:
 ### Common Issues
 
 1. **Login fails**: Check ADMIN_PASSWORD environment variable
-2. **Extensions can't connect**: Verify CREDITS_API_KEY matches in both systems
-3. **SSL errors**: Use `CREDITS_API_SSL_VERIFY=false` for self-signed certificates
-4. **Database sync issues**: Check OpenWebUI database path and permissions
+2. **Extensions can't connect**: 
+   - Verify CREDITS_API_KEY matches in both systems
+   - For production: Use `https://yourdomain.com` (not `https://yourdomain.com/credits`)
+   - For development: Use `http://localhost:8081`
+3. **SSL errors**: 
+   - With nginx and Let's Encrypt: Set `CREDITS_API_SSL_VERIFY=true`
+   - Development/self-signed: Set `CREDITS_API_SSL_VERIFY=false`
+4. **Static files not loading**: 
+   - Ensure `ROOT_PATH` is commented out in `credit_admin/.env`
+   - Verify nginx is stripping `/credits` prefix before proxying
+5. **Redirects lose /credits prefix**: 
+   - Check nginx `proxy_redirect` rules are configured
+   - Verify JavaScript BASE_PATH auto-detection in `main.js`
+6. **Database sync issues**: Check OpenWebUI database path and permissions
+7. **404 errors on /credits paths**: Ensure nginx configuration is active and reloaded (`sudo nginx -t && sudo systemctl reload nginx`)
 
 
 ## 📖 User Manual

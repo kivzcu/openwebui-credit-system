@@ -34,9 +34,10 @@ class CreditDatabase:
     
     def get_placeholder(self):
         """Get the correct placeholder for the database type"""
-        return '%' if self.db_type == 'postgresql' else '?'
+        # For PostgreSQL / psycopg2 we use '%s' placeholders, for sqlite3 we use '?'
+        return '%s' if self.db_type == 'postgresql' else '?'
     
-    def execute_query(self, query: str, params: tuple = ()) -> 'cursor':
+    def execute_query(self, query: str, params: tuple = ()):  # -> cursor-like
         """Execute a query with proper parameter formatting for the database type"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -267,6 +268,42 @@ class CreditDatabase:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_user ON credit_usage_statistics(user_id)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_usage_stats_date ON credit_usage_statistics(year, month)")
                 
+                # Waiting list table for public registrations (PostgreSQL)
+                # Store only plaintext passwords per user request (primary deployment is Postgres)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_waiting_list (
+                        id SERIAL PRIMARY KEY,
+                        full_name TEXT NOT NULL,
+                        email TEXT NOT NULL UNIQUE,
+                        password_plain TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        processed BOOLEAN NOT NULL DEFAULT false,
+                        processed_at TIMESTAMP
+                    )
+                """)
+
+                try:
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_waiting_list_email ON credit_waiting_list(email)")
+                except Exception:
+                    pass
+                # Ensure columns exist for older databases and remove password_hash if present
+                try:
+                    cursor.execute("ALTER TABLE credit_waiting_list ADD COLUMN IF NOT EXISTS processed BOOLEAN NOT NULL DEFAULT false")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE credit_waiting_list ADD COLUMN IF NOT EXISTS processed_at TIMESTAMP")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE credit_waiting_list ADD COLUMN IF NOT EXISTS password_plain TEXT")
+                except Exception:
+                    pass
+                # If an older DB still has password_hash, drop it (Postgres supports DROP COLUMN IF EXISTS)
+                try:
+                    cursor.execute("ALTER TABLE credit_waiting_list DROP COLUMN IF EXISTS password_hash")
+                except Exception:
+                    pass
             else:
                 # SQLite schema (existing)
                 cursor.execute("""
@@ -427,6 +464,30 @@ class CreditDatabase:
                 
                 try:
                     cursor.execute("ALTER TABLE credit_usage_statistics ADD COLUMN balance_before_reset REAL")
+                except sqlite3.OperationalError:
+                    pass
+
+                # Create waiting list table for SQLite (with processed fields)
+                # Use plaintext password field to match Postgres schema (per user request)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS credit_waiting_list (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        full_name TEXT NOT NULL,
+                        email TEXT NOT NULL UNIQUE,
+                        password_plain TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        processed INTEGER NOT NULL DEFAULT 0,
+                        processed_at TIMESTAMP
+                    )
+                """)
+
+                # Migrate older SQLite DBs that may not have the new columns
+                try:
+                    cursor.execute("ALTER TABLE credit_waiting_list ADD COLUMN processed INTEGER NOT NULL DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE credit_waiting_list ADD COLUMN processed_at TIMESTAMP")
                 except sqlite3.OperationalError:
                     pass
                 
@@ -1975,6 +2036,72 @@ class CreditDatabase:
                 message=f"Failed to initialize monthly statistics: {str(e)}",
                 metadata={"year": year, "month": month, "error": str(e)}
             )
+
+    # Waiting list operations
+    def add_waiting_list_entry(self, full_name: str, email: str, password_plain: str) -> bool:
+        """Insert a new waiting list entry. Returns False if email already exists.
+        Stores plaintext password (per user request). This is insecure — be sure you understand the risk.
+        """
+        try:
+            # Use appropriate placeholder normalization
+            if self.db_type == 'postgresql':
+                self.execute_query("""
+                    INSERT INTO credit_waiting_list (full_name, email, password_plain)
+                    VALUES (%s, %s, %s)
+                """, (full_name, email, password_plain))
+            else:
+                # SQLite placeholder differences handled by execute_query
+                self.execute_query("""
+                    INSERT INTO credit_waiting_list (full_name, email, password_plain)
+                    VALUES (%s, %s, %s)
+                """, (full_name, email, password_plain))
+            return True
+        except Exception as e:
+            # Likely UNIQUE constraint on email
+            try:
+                self.log_action('waiting_list_error', 'system', f'Failed to add waiting list entry: {e}')
+            except Exception:
+                pass
+            return False
+
+    def mark_waiting_list_processed(self, entry_id: int) -> Optional[Dict[str, Any]]:
+        """Mark a waiting list entry as processed and set processed_at timestamp. Returns the updated row or None."""
+        try:
+            # Update the row
+            if self.db_type == 'postgresql':
+                self.execute_query(
+                    "UPDATE credit_waiting_list SET processed = %s, processed_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (True, entry_id)
+                )
+            else:
+                # SQLite uses integers for booleans
+                self.execute_query(
+                    "UPDATE credit_waiting_list SET processed = ?, processed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (1, entry_id)
+                )
+
+            # Return the updated row
+            row = self.fetch_one(
+                "SELECT id, full_name, email, created_at, processed, processed_at FROM credit_waiting_list WHERE id = %s",
+                (entry_id,)
+            )
+            return row
+        except Exception as e:
+            try:
+                self.log_action('waiting_list_error', 'system', f'Failed to mark processed for id {entry_id}: {e}')
+            except Exception:
+                pass
+            return None
+
+    def list_waiting_list_entries(self, limit: int = 100, offset: int = 0) -> list:
+        """Return waiting list entries ordered with unprocessed first, then by created_at desc"""
+        rows = self.fetch_all("""
+            SELECT id, full_name, email, created_at, processed, processed_at
+            FROM credit_waiting_list
+            ORDER BY processed ASC, created_at DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+        return rows
 
 # Global database instance
 db = CreditDatabase()

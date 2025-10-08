@@ -160,11 +160,11 @@ class Filter:
             self.estimation_warning = ""  # Exact cost, no warning
             actor = "model-usage"
 
-            # Extract cached tokens and reasoning tokens
-            cached_tokens = usage.get("prompt_tokens_details", {}).get(
+            # Extract cached tokens and reasoning tokens (safe when details may be None)
+            cached_tokens = (usage.get("prompt_tokens_details") or {}).get(
                 "cached_tokens", 0
             )
-            reasoning_tokens = usage.get("completion_tokens_details", {}).get(
+            reasoning_tokens = (usage.get("completion_tokens_details") or {}).get(
                 "reasoning_tokens", 0
             )
 

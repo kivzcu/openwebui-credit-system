@@ -1,3 +1,6 @@
+// Base path configuration - auto-detect from current path or use root
+const BASE_PATH = window.location.pathname.includes('/credits') ? '/credits' : '';
+
 // Authentication state
 let authToken = localStorage.getItem('authToken');
 let currentUser = null;
@@ -405,7 +408,7 @@ document.getElementById('loginFormElement').addEventListener('submit', async (e)
   formData.append('password', password);
   
   try {
-    const response = await fetch('/auth/login', {
+    const response = await fetch(`${BASE_PATH}/auth/login`, {
       method: 'POST',
       body: formData
     });
@@ -436,7 +439,7 @@ document.getElementById('loginFormElement').addEventListener('submit', async (e)
 
 async function verifyToken() {
   try {
-    const response = await fetch('/auth/me', {
+    const response = await fetch(`${BASE_PATH}/auth/me`, {
       headers: {
         'Authorization': `Bearer ${authToken}`
       }
@@ -463,7 +466,7 @@ async function verifyToken() {
 
 async function getCurrentUser() {
   try {
-    const response = await fetch('/auth/me', {
+    const response = await fetch(`${BASE_PATH}/auth/me`, {
       headers: {
         'Authorization': `Bearer ${authToken}`
       }
@@ -512,6 +515,9 @@ async function authenticatedFetch(url, options = {}) {
     throw new AuthenticationError('Not authenticated');
   }
   
+  // Prepend BASE_PATH if URL starts with /
+  const fullUrl = url.startsWith('/') ? `${BASE_PATH}${url}` : url;
+  
   const headers = {
     Authorization: `Bearer ${authToken}`,
     ...(options.headers || {})
@@ -531,7 +537,7 @@ async function authenticatedFetch(url, options = {}) {
   }
   
   try {
-    const response = await fetch(url, {
+    const response = await fetch(fullUrl, {
       ...options,
       headers
     });
@@ -562,7 +568,7 @@ async function verifyTokenSilently() {
   if (!authToken) return false;
   
   try {
-    const response = await fetch('/auth/me', {
+    const response = await fetch(`${BASE_PATH}/auth/me`, {
       headers: {
         'Authorization': `Bearer ${authToken}`
       }
@@ -632,6 +638,9 @@ function selectView(view) {
       break;
     case 'yearlyStats':
       renderYearlyStatsView();
+      break;
+    case 'waitingList':
+      renderWaitingListView();
       break;
   }
 }
@@ -1192,6 +1201,97 @@ container.innerHTML += `
     }
     container.innerHTML += `<p class="text-red-500">Error loading groups: ${escapeHtml(err.message)}</p>`;
   }
+}
+
+async function renderWaitingListView() {
+  const container = document.getElementById('mainContent');
+  container.innerHTML = `<div class="flex items-center justify-between mb-4"><h2 class="text-2xl font-bold">Waiting List</h2><div class="flex gap-2"><button id="downloadAllBtn" class="px-3 py-1 bg-green-600 text-white rounded">Download all</button><button id="downloadUnprocessedBtn" class="px-3 py-1 bg-yellow-600 text-white rounded">Download unprocessed</button></div></div><div id="waitingListContent">Loading...</div>`;
+
+  try {
+    const res = await authenticatedFetch('/api/credits/admin/waiting-list');
+    const rows = await res.json();
+
+    let html = `<table class="w-full text-sm text-left text-gray-500 dark:text-gray-400"><thead class="text-xs uppercase bg-gray-50 dark:bg-gray-850"><tr><th class="px-3 py-1.5">Full Name</th><th class="px-3 py-1.5">Email</th><th class="px-3 py-1.5">Registered</th><th class="px-3 py-1.5">Status</th><th class="px-3 py-1.5 text-right">Actions</th></tr></thead><tbody>`;
+    for (const r of rows) {
+      const created = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+      const processed = r.processed === true || r.processed === 1 || r.processed === 't';
+      const processedAt = r.processed_at ? new Date(r.processed_at).toLocaleString() : '';
+      const statusHtml = processed ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Processed<br/><span class="text-xs text-gray-600">${escapeHtml(processedAt)}</span></span>` : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Pending</span>`;
+      const actionBtn = processed ? '' : `<button type="button" class="px-2 py-1 text-sm bg-blue-600 text-white rounded mark-processed-btn" data-entry-id="${escapeHtml(String(r.id))}">Mark processed</button>`;
+
+      html += `<tr class="bg-white dark:bg-gray-900 border-t hover:bg-gray-50 dark:hover:bg-gray-800"><td class="px-3 py-1">${escapeHtml(r.full_name)}</td><td class="px-3 py-1">${escapeHtml(r.email)}</td><td class="px-3 py-1 text-xs">${escapeHtml(created)}</td><td class="px-3 py-1 text-xs">${statusHtml}</td><td class="px-3 py-1 text-right">${actionBtn}</td></tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('waitingListContent').innerHTML = html;
+    // Attach CSV download handlers
+    document.getElementById('downloadAllBtn').addEventListener('click', async () => {
+      try {
+        await downloadWaitingListCsv(null, 'waiting_list_all.csv');
+      } catch (err) {
+        notifications.error(`Download failed: ${err.message}`);
+      }
+    });
+    document.getElementById('downloadUnprocessedBtn').addEventListener('click', async () => {
+      try {
+        await downloadWaitingListCsv(false, 'waiting_list_unprocessed.csv');
+      } catch (err) {
+        notifications.error(`Download failed: ${err.message}`);
+      }
+    });
+    // Attach delegated click listener for process buttons
+    document.getElementById('waitingListContent').addEventListener('click', async (e) => {
+      const btn = e.target.closest('.mark-processed-btn');
+      if (!btn) return;
+      const id = btn.dataset.entryId;
+      try {
+        btn.disabled = true;
+        const res = await authenticatedFetch(`/api/credits/admin/waiting-list/${encodeURIComponent(id)}/process`, { method: 'POST' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          notifications.error(data.detail || 'Failed to mark processed');
+          btn.disabled = false;
+          return;
+        }
+        const updated = await res.json();
+        notifications.success('Marked processed');
+        // Refresh the view to reflect status
+        renderWaitingListView();
+      } catch (err) {
+        notifications.error(`Error: ${err.message}`);
+        btn.disabled = false;
+      }
+    });
+  } catch (err) {
+    if (err instanceof AuthenticationError) return;
+    document.getElementById('waitingListContent').innerHTML = `<p class="text-red-500">Error loading waiting list: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+
+async function downloadWaitingListCsv(processedFilter = null, filename = 'waiting_list.csv') {
+  // Build URL with optional processed query param
+  let url = '/api/credits/admin/waiting-list/download';
+  if (processedFilter === true) url += '?processed=true';
+  else if (processedFilter === false) url += '?processed=false';
+
+  const res = await authenticatedFetch(url, { method: 'GET' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || 'Failed to download CSV');
+  }
+
+  const text = await res.text();
+  const blob = new Blob([text], { type: 'text/csv' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(link.href);
+    link.remove();
+  }, 1000);
+  notifications.success('Download started');
 }
 
 function editGroup(groupId) {

@@ -498,7 +498,7 @@
 
             async loadModels() {
                 try {
-                    const response = await fetch('/api/public/models/pricing');
+                    const response = await fetch('/credits/api/public/models/pricing');
                     if (!response.ok) throw new Error('Failed to load models');
                     
                     this.models = await response.json();

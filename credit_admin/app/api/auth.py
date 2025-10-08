@@ -1,4 +1,5 @@
 from datetime import timedelta
+import os
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from app.auth import (
@@ -12,7 +13,9 @@ from app.auth import (
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+# Support running behind a reverse proxy at /credits path
+ROOT_PATH = os.getenv("ROOT_PATH", "")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{ROOT_PATH}/auth/login")
 
 @router.post("/login", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):

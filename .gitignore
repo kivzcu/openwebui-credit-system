@@ -21,6 +21,7 @@ venv/
 .env
 .env.backup
 .webui_secret_key
+credit_admin/nginx.conf
 
 # Ignore VSCode settings
 .vscode/

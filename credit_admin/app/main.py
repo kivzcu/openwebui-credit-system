@@ -20,9 +20,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from app.api import credits_v2, auth
+from app.api import waiting_list
 from app.database import db
 from app.config import BASE_DIR, DB_FILE, DATABASE_URL, CREDIT_DATABASE_URL
-from app.auth import print_security_config, get_current_admin_user
+from app.auth import print_security_config, get_current_admin_user, User
 import uvicorn
 
 def is_postgresql_database():
@@ -399,7 +400,11 @@ async def lifespan(app: FastAPI):
         db_observer.stop()
         db_observer.join()
 
-app = FastAPI(lifespan=lifespan)
+# Get root_path from environment (for running behind reverse proxy)
+# Set ROOT_PATH=/credits if running behind nginx at https://domain/credits/
+ROOT_PATH = os.getenv("ROOT_PATH", "")
+
+app = FastAPI(lifespan=lifespan, root_path=ROOT_PATH)
 
 # Add security middleware first
 app.add_middleware(SecurityMiddleware)
@@ -425,6 +430,13 @@ def serve_pricing():
 # Include routers
 app.include_router(auth.router)
 app.include_router(credits_v2.router)
+app.include_router(waiting_list.router)
+
+# Public waiting list registration page
+@app.get("/waiting-list")
+def serve_waiting_list():
+    waiting_file = os.path.join(static_dir, "waiting_list.html")
+    return FileResponse(waiting_file)
 
 # CORS middleware - Tighten for production security
 # In production, replace "*" with actual allowed origins like ["https://yourdomain.com"]
@@ -467,7 +479,7 @@ async def get_reset_status():
         return {"error": str(e)}
 
 @app.post("/api/reset/manual", tags=["reset"])
-async def manual_reset(force: bool = Query(False, description="Force reset even if already performed this month"), current_user: get_current_admin_user = Depends(get_current_admin_user)):
+async def manual_reset(force: bool = Query(False, description="Force reset even if already performed this month"), current_user: User = Depends(get_current_admin_user)):
     """Manually trigger a monthly reset"""
     try:
         reset_logger.info("🔧 Manual reset triggered via API")

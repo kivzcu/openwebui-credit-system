@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Join the Waiting List</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen flex items-center justify-center">
+  <div class="w-full max-w-md p-6 bg-white dark:bg-gray-800 rounded shadow">
+    <h1 class="text-2xl font-bold mb-4">Join the OpenWebUI Credit Admin Waiting List</h1>
+    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">Enter your details and we'll notify you when access is available.</p>
+    <form id="wlForm" class="space-y-3">
+      <div>
+        <label class="block text-sm">Full name</label>
+        <input id="fullName" name="full_name" type="text" required class="w-full px-3 py-2 border rounded bg-transparent dark:border-gray-700" />
+      </div>
+      <div>
+        <label class="block text-sm">Email</label>
+        <input id="email" name="email" type="email" required class="w-full px-3 py-2 border rounded bg-transparent dark:border-gray-700" />
+      </div>
+      <div>
+        <label class="block text-sm">Password (min 8 chars)</label>
+        <input id="password" name="password" type="password" required minlength="8" class="w-full px-3 py-2 border rounded bg-transparent dark:border-gray-700" />
+      </div>
+      <div id="error" class="hidden text-sm text-red-600"></div>
+      <div id="success" class="hidden text-sm text-green-600"></div>
+      <div class="pt-3">
+        <button type="submit" class="w-full px-3 py-2 bg-blue-600 text-white rounded">Join waiting list</button>
+      </div>
+    </form>
+    <p class="text-xs text-gray-500 mt-3">We store your name, email and a hashed password in our secure database.</p>
+  </div>
+
+  <script>
+    // Base path configuration - auto-detect from current path or use root
+    const BASE_PATH = window.location.pathname.includes('/credits') ? '/credits' : '';
+    
+    const form = document.getElementById('wlForm');
+    const err = document.getElementById('error');
+    const success = document.getElementById('success');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.classList.add('hidden');
+      success.classList.add('hidden');
+
+      const fullName = document.getElementById('fullName').value.trim();
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!fullName || !email || !password) {
+        err.textContent = 'Please complete all fields';
+        err.classList.remove('hidden');
+        return;
+      }
+      if (password.length < 8) {
+        err.textContent = 'Password must be at least 8 characters';
+        err.classList.remove('hidden');
+        return;
+      }
+
+      try {
+        const payload = { full_name: fullName, email, password };
+        console.log('Sending payload:', payload);
+        
+        const res = await fetch(`${BASE_PATH}/waiting-list/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        console.log('Response:', res.status, data);
+        
+        if (res.ok) {
+          success.textContent = data.message || 'Registered successfully';
+          success.classList.remove('hidden');
+          form.reset();
+        } else {
+          // Show detailed validation errors if available
+          let errorMsg = data.detail || data.message || 'Registration failed';
+          if (Array.isArray(data.detail)) {
+            errorMsg = data.detail.map(e => `${e.loc.join('.')}: ${e.msg}`).join('; ');
+          }
+          err.textContent = errorMsg;
+          err.classList.remove('hidden');
+          console.error('Validation error:', data);
+        }
+      } catch (e) {
+        err.textContent = 'Network error. Please try again later.';
+        err.classList.remove('hidden');
+        console.error('Network error:', e);
+      }
+    });
+  </script>
+</body>
+</html>
